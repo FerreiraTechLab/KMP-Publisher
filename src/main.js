@@ -3,6 +3,9 @@ const fs = require("node:fs/promises");
 const path = require("node:path");
 const {inspectPackage} = require("./core/package-inspection");
 const {createSubmission} = require("./core/submission");
+const {SeedManager} = require("./core/seed-manager");
+
+let seedManager;
 
 function createWindow() {
   const window = new BrowserWindow({
@@ -38,10 +41,28 @@ ipcMain.handle("submission:export", async (_event, input, inspected) => {
   await fs.copyFile(inspected.filePath, path.join(packages, inspected.fileName));
   await fs.writeFile(path.join(output, "submission.json"),
     JSON.stringify(generated.submission, null, 2) + "\n", {encoding: "utf8", flag: "wx"});
+  await seedManager.registerProposal({id: input.id, version: input.version,
+    sha256: inspected.sha256, packagePath: path.join(packages, inspected.fileName)});
   return {errors: [], output};
 });
 
-app.whenReady().then(() => {
+ipcMain.handle("seeds:list", () => seedManager.list());
+ipcMain.handle("seeds:attach", async (_event, id) => {
+  const selected = await dialog.showOpenDialog({title: "Selecione o torrent oficial",
+    properties: ["openFile"], filters: [{name: "Torrent BitTorrent", extensions: ["torrent"]}]});
+  if (selected.canceled || !selected.filePaths[0]) return {canceled: true};
+  try { await seedManager.attachOfficialTorrent(id, selected.filePaths[0]); return {ok: true}; }
+  catch (error) { return {ok: false, error: error.message}; }
+});
+ipcMain.handle("seeds:start", async (_event, id) => {
+  try { await seedManager.start(id); return {ok: true}; }
+  catch (error) { return {ok: false, error: error.message}; }
+});
+ipcMain.handle("seeds:stop", async (_event, id) => { await seedManager.stop(id); return {ok: true}; });
+
+app.whenReady().then(async () => {
+  seedManager = new SeedManager(path.join(app.getPath("userData"), "seeding"));
+  await seedManager.load();
   createWindow();
   app.on("activate", () => { if (BrowserWindow.getAllWindows().length === 0) createWindow(); });
 });

@@ -11,6 +11,7 @@
     "package": "electron-builder --publish never"
   },
   "dependencies": {
+    "bencode": "^3.0.3",
     "yauzl": "^3.2.0"
   },
   "devDependencies": {
@@ -20,10 +21,32 @@
   "build": {
     "appId": "dev.ferreiratechlab.kmppublisher",
     "productName": "KMP Publisher",
-    "files": ["src/**/*", "package.json", "README.md", "docs/**/*", "schemas/**/*"],
-    "directories": {"output": "release"},
-    "linux": {"target": ["AppImage"], "category": "Development"},
-    "win": {"target": ["nsis"]},
-    "mac": {"target": ["dmg"], "category": "public.app-category.developer-tools"}
+    "files": [
+      "src/**/*",
+      "package.json",
+      "README.md",
+      "docs/**/*",
+      "schemas/**/*"
+    ],
+    "directories": {
+      "output": "release"
+    },
+    "linux": {
+      "target": [
+        "AppImage"
+      ],
+      "category": "Development"
+    },
+    "win": {
+      "target": [
+        "nsis"
+      ]
+    },
+    "mac": {
+      "target": [
+        "dmg"
+      ],
+      "category": "public.app-category.developer-tools"
+    }
   }
 }

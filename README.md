@@ -38,6 +38,8 @@ A primeira implementação oferece:
 - formulário para metadados, compatibilidade e licença;
 - validação antes da exportação;
 - geração de `submission.json` e cópia do pacote em `packages/`.
+- registro persistente do pacote para semeação assim que o torrent oficial for
+  disponibilizado pela publicação.
 
 O envio autenticado ao GitHub e o acompanhamento da revisão serão adicionados
 depois que o fluxo local for validado com autores de ports.

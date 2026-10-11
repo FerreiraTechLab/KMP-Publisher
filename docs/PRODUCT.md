@@ -37,6 +37,8 @@ auditável.
 - preparação da proposta e upload do pacote;
 - criação de pull request;
 - acompanhamento das verificações e da revisão.
+- registro local do pacote para que o computador do autor se torne um seeder
+  assim que receber o torrent oficial.
 
 Depois da aprovação, a automação editorial gera torrent e web seeds, atualiza
 o snapshot, assina o head e publica os mirrors. Essas operações aparecem como
@@ -65,6 +67,8 @@ um único estado de publicação na GUI.
 - criação de branch ou fork e pull request;
 - upload controlado do pacote;
 - acompanhamento do CI e comentários de revisão.
+- ativação automática do seed após a publicação, com limite de upload, pausa e
+  retomada visíveis na GUI.
 
 ### v0.3 — assistência editorial
 
