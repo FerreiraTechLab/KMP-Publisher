@@ -1,0 +1,29 @@
+{
+  "name": "kmp-publisher",
+  "version": "0.1.0",
+  "description": "Interface multiplataforma para propor ports ao catálogo KMP",
+  "main": "src/main.js",
+  "author": "FerreiraTechLab",
+  "license": "UNLICENSED",
+  "scripts": {
+    "start": "node scripts/start-electron.js",
+    "test": "node --test",
+    "package": "electron-builder --publish never"
+  },
+  "dependencies": {
+    "yauzl": "^3.2.0"
+  },
+  "devDependencies": {
+    "electron": "^38.2.2",
+    "electron-builder": "^26.0.12"
+  },
+  "build": {
+    "appId": "dev.ferreiratechlab.kmppublisher",
+    "productName": "KMP Publisher",
+    "files": ["src/**/*", "package.json", "README.md", "docs/**/*", "schemas/**/*"],
+    "directories": {"output": "release"},
+    "linux": {"target": ["AppImage"], "category": "Development"},
+    "win": {"target": ["nsis"]},
+    "mac": {"target": ["dmg"], "category": "public.app-category.developer-tools"}
+  }
+}

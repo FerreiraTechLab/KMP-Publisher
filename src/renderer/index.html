@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>KMP Publisher</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header><div class="brand">KMP</div><div><h1>Publisher</h1><p>Prepare seu port para publicação</p></div><span class="version">v0.1</span></header>
+  <main>
+    <nav><button class="step active">1 <span>Pacote</span></button><button class="step">2 <span>Projeto</span></button><button class="step">3 <span>Compatibilidade</span></button><button class="step">4 <span>Revisão</span></button></nav>
+    <section class="intro"><h2>Proposta de publicação</h2><p>Selecione o ZIP e informe os dados do port. Hash, estrutura e contrato são verificados automaticamente.</p></section>
+    <form id="publisher-form">
+      <section class="card package-card">
+        <div><h3>Pacote do port</h3><p id="package-summary">Nenhum ZIP selecionado</p></div>
+        <button type="button" id="choose-package" class="secondary">Selecionar ZIP</button>
+        <div id="package-details" class="package-details hidden"></div>
+      </section>
+      <section class="card"><h3>Identificação</h3><div class="grid">
+        <label>ID do port<input name="id" placeholder="meu-port" required></label>
+        <label>Nome<input name="name" placeholder="Meu Port" required></label>
+        <label class="wide">Descrição<textarea name="description" rows="3" required></textarea></label>
+        <label>Versão<input name="version" placeholder="1.0.0" required></label>
+        <label>Revisão<input name="revision" type="number" min="1" value="1"></label>
+        <label>Canal<select name="channel"><option value="stable">Estável</option><option value="beta">Beta</option></select></label>
+        <label class="wide">Notas da versão<textarea name="releaseNotes" rows="2"></textarea></label>
+      </div></section>
+      <section class="card"><h3>Origem e licença</h3><div class="grid">
+        <label>Homepage<input name="homepage" type="url" placeholder="https://..."></label>
+        <label>Código fonte<input name="source" type="url" placeholder="https://..."></label>
+        <label>Nome do porter<input name="porterName" required></label>
+        <label>Perfil do porter<input name="porterUrl" type="url" placeholder="https://..."></label>
+        <label>Licença<input name="license" placeholder="MIT ou LicenseRef-..." required></label>
+        <label>Evidência da licença<input name="licenseEvidence" type="url" placeholder="https://..."></label>
+        <label class="wide">Observações de redistribuição<textarea name="redistributionNotes" rows="2"></textarea></label>
+        <label class="check wide"><input name="redistributionAllowed" type="checkbox"> Confirmo que este pacote pode ser redistribuído pelo KMP.</label>
+      </div></section>
+      <section class="card"><h3>Instalação e compatibilidade</h3><div class="grid">
+        <label class="wide">Caminhos instalados, separados por vírgula<input name="installPaths" placeholder="Meu Port.sh, meuport/"></label>
+        <label class="wide">Dados do usuário, separados por vírgula<input name="userDataPaths" placeholder="meuport/conf/"></label>
+        <label>Arquiteturas<input name="architectures" value="aarch64"></label>
+        <label>Firmwares<input name="firmwares" value="darkos, rocknix, aurknix"></label>
+        <label>Variante<input name="variantId" value="aarch64-portmaster"></label>
+        <label>RAM mínima (MiB)<input name="minimumRamMB" type="number" min="1" value="128"></label>
+        <label>Analógicos necessários<select name="analogSticks"><option>0</option><option>1</option><option>2</option></select></label>
+        <label>Renderizadores<input name="renderers" placeholder="gles2"></label>
+        <label>Runtimes<input name="runtimes" placeholder="love_11_5"></label>
+        <label class="check"><input name="readyToRun" type="checkbox" checked> Pronto para executar</label>
+      </div></section>
+      <section id="messages" class="messages hidden"></section>
+      <footer><button type="button" id="validate" class="secondary">Validar proposta</button><button type="button" id="export" class="primary">Exportar proposta</button></footer>
+    </form>
+  </main>
+  <script src="renderer.js"></script>
+</body>
+</html>
