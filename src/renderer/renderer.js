@@ -15,7 +15,8 @@ async function refreshSeeds() {
   list.replaceChildren(...seeds.map((seed) => {
     const row = document.createElement("div"); row.className = "seed-row";
     const publication = seed.publicationStatus === "published" ? "publicado" : "aguardando publicação";
-    const label = document.createElement("span"); label.textContent = `${seed.portId} ${seed.version} · ${STATUS_LABELS[seed.status] || seed.status} · ${publication}`;
+    const distribution = seed.running ? "semeando" : (STATUS_LABELS[seed.status] || seed.status);
+    const label = document.createElement("span"); label.textContent = `${seed.portId} ${seed.version} · ${distribution} · ${publication}`;
     const action = document.createElement("button"); action.type = "button"; action.className = "secondary";
     if (seed.running) { action.textContent = "Parar seed"; action.onclick = async () => { await window.publisher.stopSeed(seed.id); await refreshSeeds(); }; }
     else { action.textContent = "Começar seed"; action.onclick = async () => { const result = await window.publisher.startSeed(seed.id); if (!result.ok) showMessage("error", result.error); await refreshSeeds(); }; }
@@ -72,7 +73,8 @@ setInterval(refreshSeeds, 10000);
 document.querySelector("#sync-seeds").addEventListener("click", async () => {
   const result = await window.publisher.syncSeeds();
   if (!result.ok) showMessage("error", result.error);
-  else showMessage("success", result.activated ? `${result.activated} seed(s) iniciado(s).` :
-    `Catálogo ${result.sequence} verificado. A publicação ainda não está disponível.`);
+  else showMessage(result.activated ? "success" : "warning",
+    result.activated ? `${result.activated} publicação(ões) confirmada(s).` :
+      `Catálogo ${result.sequence} verificado. A proposta continua aguardando publicação; o seed local permanece ativo.`);
   await refreshSeeds();
 });
