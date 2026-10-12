@@ -50,7 +50,8 @@ async function showSeedDetails(id, open = true) {
     ["Abertura no roteador", mapping.active ? `${String(mapping.method).toUpperCase()} ativo` : "indisponível"],
     ["Endereço externo", mapping.externalAddress || "não detectado"],
     ["Acessibilidade", mapping.addressScope === "cgnat" ? "CGNAT: conexão direta bloqueada" :
-      mapping.internetReachable ? "provável pela internet" : "somente saída/rede local"],
+      mapping.internetReachable ? "provável pela internet" : mapping.active ?
+        "mapeada; teste externo pendente" : "somente saída/rede local"],
     ["Tamanho do pacote", formatBytes(seed.packageSizeBytes)],
     ["Backend", seed.backendAvailable ? "aria2 disponível" : "indisponível"],
     ["Estado do torrent", transfer.status || (seed.running ? "iniciando" : "parado")]
