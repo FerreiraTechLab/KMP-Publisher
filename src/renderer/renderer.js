@@ -1,6 +1,8 @@
 let inspected = null;
 const form = document.querySelector("#publisher-form");
 const messages = document.querySelector("#messages");
+const STATUS_LABELS = {"awaiting-publication": "aguardando publicação", ready: "pronto",
+  checking: "verificando", seeding: "semeando", stopped: "parado", error: "erro"};
 
 async function refreshSeeds() {
   const seeds = await window.publisher.listSeeds();
@@ -12,7 +14,7 @@ async function refreshSeeds() {
   const list = document.querySelector("#seed-list");
   list.replaceChildren(...seeds.map((seed) => {
     const row = document.createElement("div"); row.className = "seed-row";
-    const label = document.createElement("span"); label.textContent = `${seed.portId} ${seed.version} · ${seed.status}`;
+    const label = document.createElement("span"); label.textContent = `${seed.portId} ${seed.version} · ${STATUS_LABELS[seed.status] || seed.status}`;
     const action = document.createElement("button"); action.type = "button"; action.className = "secondary";
     if (!seed.torrentPath) { action.textContent = "Adicionar torrent oficial"; action.onclick = async () => { const result = await window.publisher.attachTorrent(seed.id); if (result?.error) showMessage("error", result.error); await refreshSeeds(); }; }
     else if (seed.running) { action.textContent = "Parar seed"; action.onclick = async () => { await window.publisher.stopSeed(seed.id); await refreshSeeds(); }; }
@@ -61,3 +63,11 @@ document.querySelector("#export").addEventListener("click", async () => {
 });
 
 refreshSeeds();
+setInterval(refreshSeeds, 10000);
+document.querySelector("#sync-seeds").addEventListener("click", async () => {
+  const result = await window.publisher.syncSeeds();
+  if (!result.ok) showMessage("error", result.error);
+  else showMessage("success", result.activated ? `${result.activated} seed(s) iniciado(s).` :
+    `Catálogo ${result.sequence} verificado. A publicação ainda não está disponível.`);
+  await refreshSeeds();
+});

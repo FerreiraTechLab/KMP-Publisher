@@ -86,6 +86,7 @@ class SeedManager {
       `--dir=${path.dirname(record.packagePath)}`, record.torrentPath], {stdio: "ignore", windowsHide: true});
     this.processes.set(id, child); record.status = "checking";
     child.once("spawn", async () => { record.status = "seeding"; await this.save(); });
+    child.once("error", async () => { this.processes.delete(id); record.status = "error"; await this.save(); });
     child.once("exit", async (code) => { this.processes.delete(id); record.status = code === 0 ? "stopped" : "error"; await this.save(); });
     return record;
   }

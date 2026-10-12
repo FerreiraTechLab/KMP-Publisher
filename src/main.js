@@ -4,8 +4,29 @@ const path = require("node:path");
 const {inspectPackage} = require("./core/package-inspection");
 const {createSubmission} = require("./core/submission");
 const {SeedManager} = require("./core/seed-manager");
+const {findPublishedPackage, loadSignedCatalog} = require("./core/catalog-discovery");
 
 let seedManager;
+const CATALOG_URL = "https://ferreiratechlab.github.io/KMP-catalog";
+
+async function synchronizePublishedSeeds() {
+  const key = app.isPackaged ? path.join(process.resourcesPath, "catalog-root.pub") :
+    path.join(__dirname, "..", "resources", "catalog-root.pub");
+  const catalog = await loadSignedCatalog({baseUrl: CATALOG_URL, publicKeyPath: key});
+  const torrentDirectory = path.join(seedManager.stateDirectory, "torrents");
+  await fs.mkdir(torrentDirectory, {recursive: true});
+  let activated = 0;
+  for (const record of seedManager.records.filter((item) => item.status === "awaiting-publication")) {
+    const download = findPublishedPackage(catalog, record);
+    if (!download?.torrent) continue;
+    const torrentPath = path.join(torrentDirectory, `${record.portId}-${record.version}.torrent`);
+    await fs.writeFile(torrentPath, Buffer.from(download.torrent, "base64"));
+    await seedManager.attachOfficialTorrent(record.id, torrentPath);
+    await seedManager.start(record.id);
+    activated += 1;
+  }
+  return {sequence: catalog.sequence, activated};
+}
 
 function createWindow() {
   const window = new BrowserWindow({
@@ -59,11 +80,17 @@ ipcMain.handle("seeds:start", async (_event, id) => {
   catch (error) { return {ok: false, error: error.message}; }
 });
 ipcMain.handle("seeds:stop", async (_event, id) => { await seedManager.stop(id); return {ok: true}; });
+ipcMain.handle("seeds:sync", async () => {
+  try { return {ok: true, ...(await synchronizePublishedSeeds())}; }
+  catch (error) { return {ok: false, error: error.message}; }
+});
 
 app.whenReady().then(async () => {
   seedManager = new SeedManager(path.join(app.getPath("userData"), "seeding"));
   await seedManager.load();
   createWindow();
+  synchronizePublishedSeeds().catch(() => {});
+  setInterval(() => synchronizePublishedSeeds().catch(() => {}), 5 * 60 * 1000).unref();
   app.on("activate", () => { if (BrowserWindow.getAllWindows().length === 0) createWindow(); });
 });
 app.on("window-all-closed", () => { if (process.platform !== "darwin") app.quit(); });

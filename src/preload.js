@@ -7,5 +7,6 @@ contextBridge.exposeInMainWorld("publisher", {
   listSeeds: () => ipcRenderer.invoke("seeds:list"),
   attachTorrent: (id) => ipcRenderer.invoke("seeds:attach", id),
   startSeed: (id) => ipcRenderer.invoke("seeds:start", id),
-  stopSeed: (id) => ipcRenderer.invoke("seeds:stop", id)
+  stopSeed: (id) => ipcRenderer.invoke("seeds:stop", id),
+  syncSeeds: () => ipcRenderer.invoke("seeds:sync")
 });
