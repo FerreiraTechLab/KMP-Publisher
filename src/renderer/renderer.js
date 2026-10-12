@@ -1,5 +1,6 @@
 let inspected = null;
 let selectedSeedId = null;
+let seedDetailsRefreshing = false;
 const form = document.querySelector("#publisher-form");
 const messages = document.querySelector("#messages");
 const seedModal = document.querySelector("#seed-modal");
@@ -23,7 +24,11 @@ function detailItem(label, value) {
 }
 
 async function showSeedDetails(id, open = true) {
-  const result = await window.publisher.seedDetails(id);
+  if (seedDetailsRefreshing) return;
+  seedDetailsRefreshing = true;
+  let result;
+  try { result = await window.publisher.seedDetails(id); }
+  finally { seedDetailsRefreshing = false; }
   if (!result.ok) return showMessage("error", result.error);
   const seed = result.seed; selectedSeedId = id;
   document.querySelector("#seed-modal-title").textContent = `${seed.portId} ${seed.version}`;
@@ -142,6 +147,9 @@ document.querySelector("#export").addEventListener("click", async () => {
 refreshSeeds();
 refreshGitHub();
 setInterval(refreshSeeds, 10000);
+setInterval(() => {
+  if (seedModal.open && selectedSeedId) showSeedDetails(selectedSeedId, false);
+}, 1000);
 document.querySelector("#connect-github").addEventListener("click", async () => {
   const input = document.querySelector("#github-token");
   const result = await window.publisher.connectGitHub(input.value);
