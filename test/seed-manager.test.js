@@ -3,7 +3,14 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs/promises");
 const os = require("node:os");
 const path = require("node:path");
-const {SeedManager} = require("../src/core/seed-manager");
+const {SeedManager, isPrivateAddress} = require("../src/core/seed-manager");
+
+test("classifies local and Internet peer addresses", () => {
+  assert.equal(isPrivateAddress("192.168.0.25"), true);
+  assert.equal(isPrivateAddress("10.0.0.2"), true);
+  assert.equal(isPrivateAddress("2001:4860:4860::8888"), false);
+  assert.equal(isPrivateAddress("8.8.8.8"), false);
+});
 
 test("persists a package while it awaits publication", async (context) => {
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), "kmp-publisher-seed-"));

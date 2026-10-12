@@ -41,9 +41,12 @@ async function showSeedDetails(id, open = true) {
     ["Enviado", formatBytes(transfer.uploadLength)],
     ["Velocidade", formatBytes(transfer.uploadSpeed, "/s")],
     ["Conexões", transfer.connections ?? "indisponível"],
+    ["Peers externos", transfer.remotePeers ?? "indisponível"],
     ["Tempo ativo", elapsed === null ? "—" : `${Math.floor(elapsed / 3600000)}h ${Math.floor(elapsed % 3600000 / 60000)}min`],
     ["Limite de upload", seed.uploadLimit || "sem limite"],
     ["Processo", seed.pid ? `PID ${seed.pid}` : "inativo"],
+    ["Porta BitTorrent", seed.listenPort ? `${seed.listenPort} TCP/UDP` : "indisponível"],
+    ["Abertura no roteador", seed.portMapping ? "automática" : "encaminhamento manual"],
     ["Tamanho do pacote", formatBytes(seed.packageSizeBytes)],
     ["Backend", seed.backendAvailable ? "aria2 disponível" : "indisponível"],
     ["Estado do torrent", transfer.status || (seed.running ? "iniciando" : "parado")]
