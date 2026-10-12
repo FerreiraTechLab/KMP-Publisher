@@ -4,6 +4,7 @@ const path = require("node:path");
 const {spawn} = require("node:child_process");
 const crypto = require("node:crypto");
 const net = require("node:net");
+const {PortMapper} = require("./port-mapper");
 
 function availablePort() {
   return new Promise((resolve, reject) => {
@@ -56,6 +57,7 @@ class SeedManager {
     this.spawn = options.spawn || spawn;
     this.allocatePort = options.availablePort || availablePort;
     this.listenPort = options.listenPort || 6881;
+    this.portMapper = options.portMapper || new PortMapper(this.listenPort);
     this.daemon = null;
     this.daemonStopping = false;
     this.exitPromise = null;
@@ -110,6 +112,7 @@ class SeedManager {
     child.once("exit", (code) => { this.exitPromise = this.handleDaemonExit(code !== 0); });
     try { await this.waitForDaemon(); }
     catch (error) { child.kill("SIGTERM"); this.daemon = null; throw error; }
+    await this.portMapper.start().catch(() => {});
     return this.daemon;
   }
   async handleDaemonExit(failed) {
@@ -151,7 +154,7 @@ class SeedManager {
     }
     return {...record, running: Boolean(runtime), backendAvailable: Boolean(this.aria2),
       pid: this.daemon?.child.pid || null, startedAt: runtime?.startedAt || null,
-      listenPort: this.listenPort, portMapping: false, packageSizeBytes, transfer};
+      listenPort: this.listenPort, portMapping: this.portMapper.details(), packageSizeBytes, transfer};
   }
   async registerProposal({id, version, sha256, packagePath, proposalPath}) {
     const key = `${id}@${version}`;
@@ -205,7 +208,7 @@ class SeedManager {
     if (record) { record.status = "stopped"; await this.save(); }
   }
   async shutdown() {
-    if (!this.daemon) return;
+    if (!this.daemon) { await this.portMapper.stop(); return; }
     this.daemonStopping = true;
     const child = this.daemon.child;
     const exited = new Promise((resolve) => child.once("exit", resolve));
@@ -213,6 +216,7 @@ class SeedManager {
     catch { child.kill("SIGTERM"); }
     await exited;
     if (this.exitPromise) await this.exitPromise;
+    await this.portMapper.stop();
   }
 }
 
