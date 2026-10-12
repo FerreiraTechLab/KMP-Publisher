@@ -3,7 +3,7 @@
 Aplicação gráfica multiplataforma para preparar propostas de publicação para o
 catálogo KMP. O desenvolvedor seleciona o ZIP e informa os dados do port. A
 aplicação inspeciona o pacote, calcula seu SHA-256, valida o contrato e exporta
-uma proposta reproduzível. Torrent, revisão editorial, assinatura e publicação
+uma proposta reproduzível. Revisão editorial, assinatura e publicação
 são executados posteriormente pela automação segura do KMP Catalog.
 
 ## Plataformas
@@ -37,9 +37,11 @@ A primeira implementação oferece:
 - detecção de launchers e raízes de instalação;
 - formulário para metadados, compatibilidade e licença;
 - validação antes da exportação;
-- geração de `submission.json` e cópia do pacote em `packages/`.
-- registro persistente do pacote para semeação assim que o torrent oficial for
-  disponibilizado pela publicação.
+- geração de `submission.json`, cópia do pacote em `packages/` e torrent em
+  `torrents/`;
+- geração determinística do torrent durante a exportação e início imediato da
+  semeação pelo computador do desenvolvedor;
+- confirmação posterior de que o catálogo publicou exatamente o mesmo torrent.
 
 O envio autenticado ao GitHub e o acompanhamento da revisão serão adicionados
 depois que o fluxo local for validado com autores de ports.

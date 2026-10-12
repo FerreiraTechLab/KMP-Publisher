@@ -3,8 +3,9 @@ const fs = require("node:fs/promises");
 const path = require("node:path");
 const {inspectPackage} = require("./core/package-inspection");
 const {createSubmission} = require("./core/submission");
-const {SeedManager} = require("./core/seed-manager");
+const {SeedManager, validateTorrent} = require("./core/seed-manager");
 const {findPublishedPackage, loadSignedCatalog} = require("./core/catalog-discovery");
+const {generateTorrent} = require("./core/torrent-builder");
 
 let seedManager;
 const CATALOG_URL = "https://ferreiratechlab.github.io/KMP-catalog";
@@ -16,16 +17,43 @@ async function synchronizePublishedSeeds() {
   const torrentDirectory = path.join(seedManager.stateDirectory, "torrents");
   await fs.mkdir(torrentDirectory, {recursive: true});
   let activated = 0;
-  for (const record of seedManager.records.filter((item) => item.status === "awaiting-publication")) {
+  for (const record of seedManager.records.filter((item) => item.publicationStatus !== "published")) {
     const download = findPublishedPackage(catalog, record);
     if (!download?.torrent) continue;
     const torrentPath = path.join(torrentDirectory, `${record.portId}-${record.version}.torrent`);
-    await fs.writeFile(torrentPath, Buffer.from(download.torrent, "base64"));
-    await seedManager.attachOfficialTorrent(record.id, torrentPath);
-    await seedManager.start(record.id);
+    const candidatePath = torrentPath + ".published";
+    await fs.writeFile(candidatePath, Buffer.from(download.torrent, "base64"));
+    const publishedInfoHash = await validateTorrent(candidatePath, record.packagePath);
+    if (record.infoHash && publishedInfoHash !== record.infoHash) {
+      await fs.rm(candidatePath, {force: true});
+      throw new Error(`O catálogo publicou um torrent diferente para ${record.id}.`);
+    }
+    await fs.rename(candidatePath, torrentPath);
+    await seedManager.attachTorrent(record.id, torrentPath);
+    record.publicationStatus = "published";
+    await seedManager.save();
+    if (!seedManager.processes.has(record.id)) await seedManager.start(record.id);
     activated += 1;
   }
   return {sequence: catalog.sequence, activated};
+}
+
+async function prepareLocalSeed(record, torrentDirectory) {
+  if (!record.torrentPath) {
+    const torrentPath = path.join(torrentDirectory, `${record.portId}-${record.version}.torrent`);
+    await generateTorrent(record.packagePath, torrentPath);
+    await seedManager.attachTorrent(record.id, torrentPath);
+  }
+  if (!seedManager.processes.has(record.id)) await seedManager.start(record.id);
+}
+
+async function prepareAllLocalSeeds() {
+  const torrentDirectory = path.join(seedManager.stateDirectory, "torrents");
+  await fs.mkdir(torrentDirectory, {recursive: true});
+  for (const record of seedManager.records) {
+    try { await prepareLocalSeed(record, torrentDirectory); }
+    catch (error) { record.status = "error"; record.error = error.message; await seedManager.save(); }
+  }
 }
 
 function createWindow() {
@@ -58,23 +86,26 @@ ipcMain.handle("submission:export", async (_event, input, inspected) => {
   const folderName = `${input.id}-${input.version}`.replace(/[^A-Za-z0-9._-]/g, "-");
   const output = path.join(selected.filePaths[0], folderName);
   const packages = path.join(output, "packages");
+  const torrents = path.join(output, "torrents");
   await fs.mkdir(packages, {recursive: true});
-  await fs.copyFile(inspected.filePath, path.join(packages, inspected.fileName));
+  const packagePath = path.join(packages, inspected.fileName);
+  await fs.copyFile(inspected.filePath, packagePath);
   await fs.writeFile(path.join(output, "submission.json"),
     JSON.stringify(generated.submission, null, 2) + "\n", {encoding: "utf8", flag: "wx"});
   await seedManager.registerProposal({id: input.id, version: input.version,
-    sha256: inspected.sha256, packagePath: path.join(packages, inspected.fileName)});
-  return {errors: [], output};
+    sha256: inspected.sha256, packagePath});
+  const record = seedManager.records.find((item) => item.id === `${input.id}@${input.version}`);
+  const torrent = await generateTorrent(packagePath,
+    path.join(torrents, `${path.parse(inspected.fileName).name}.torrent`));
+  await seedManager.attachTorrent(record.id, torrent.torrentPath);
+  let seedWarning = null;
+  try { await seedManager.start(record.id); }
+  catch (error) { seedWarning = error.message; }
+  return {errors: [], output, infoHash: torrent.infoHash,
+    seedStarted: !seedWarning, seedWarning};
 });
 
 ipcMain.handle("seeds:list", () => seedManager.list());
-ipcMain.handle("seeds:attach", async (_event, id) => {
-  const selected = await dialog.showOpenDialog({title: "Selecione o torrent oficial",
-    properties: ["openFile"], filters: [{name: "Torrent BitTorrent", extensions: ["torrent"]}]});
-  if (selected.canceled || !selected.filePaths[0]) return {canceled: true};
-  try { await seedManager.attachOfficialTorrent(id, selected.filePaths[0]); return {ok: true}; }
-  catch (error) { return {ok: false, error: error.message}; }
-});
 ipcMain.handle("seeds:start", async (_event, id) => {
   try { await seedManager.start(id); return {ok: true}; }
   catch (error) { return {ok: false, error: error.message}; }
@@ -88,6 +119,7 @@ ipcMain.handle("seeds:sync", async () => {
 app.whenReady().then(async () => {
   seedManager = new SeedManager(path.join(app.getPath("userData"), "seeding"));
   await seedManager.load();
+  await prepareAllLocalSeeds();
   createWindow();
   synchronizePublishedSeeds().catch(() => {});
   setInterval(() => synchronizePublishedSeeds().catch(() => {}), 5 * 60 * 1000).unref();

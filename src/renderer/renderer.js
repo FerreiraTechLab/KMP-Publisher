@@ -7,17 +7,17 @@ const STATUS_LABELS = {"awaiting-publication": "aguardando publicação", ready:
 async function refreshSeeds() {
   const seeds = await window.publisher.listSeeds();
   const active = seeds.filter((seed) => seed.running).length;
-  const waiting = seeds.filter((seed) => seed.status === "awaiting-publication").length;
+  const waiting = seeds.filter((seed) => seed.publicationStatus !== "published").length;
   document.querySelector("#seed-status").textContent = active ? `${active} semeando` :
     waiting ? `${waiting} aguardando publicação` : seeds.length ? `${seeds.length} parado(s)` :
     "Nenhuma proposta registrada";
   const list = document.querySelector("#seed-list");
   list.replaceChildren(...seeds.map((seed) => {
     const row = document.createElement("div"); row.className = "seed-row";
-    const label = document.createElement("span"); label.textContent = `${seed.portId} ${seed.version} · ${STATUS_LABELS[seed.status] || seed.status}`;
+    const publication = seed.publicationStatus === "published" ? "publicado" : "aguardando publicação";
+    const label = document.createElement("span"); label.textContent = `${seed.portId} ${seed.version} · ${STATUS_LABELS[seed.status] || seed.status} · ${publication}`;
     const action = document.createElement("button"); action.type = "button"; action.className = "secondary";
-    if (!seed.torrentPath) { action.textContent = "Adicionar torrent oficial"; action.onclick = async () => { const result = await window.publisher.attachTorrent(seed.id); if (result?.error) showMessage("error", result.error); await refreshSeeds(); }; }
-    else if (seed.running) { action.textContent = "Parar seed"; action.onclick = async () => { await window.publisher.stopSeed(seed.id); await refreshSeeds(); }; }
+    if (seed.running) { action.textContent = "Parar seed"; action.onclick = async () => { await window.publisher.stopSeed(seed.id); await refreshSeeds(); }; }
     else { action.textContent = "Começar seed"; action.onclick = async () => { const result = await window.publisher.startSeed(seed.id); if (!result.ok) showMessage("error", result.error); await refreshSeeds(); }; }
     row.append(label, action); return row;
   }));
@@ -59,7 +59,12 @@ document.querySelector("#export").addEventListener("click", async () => {
   const result = await window.publisher.exportProposal(formValue(), inspected);
   if (result.canceled) return;
   if (result.errors.length) showMessage("error", result.errors.map((item) => `• ${item}`));
-  else { showMessage("success", `Proposta exportada em:\n${result.output}`); await refreshSeeds(); }
+  else {
+    const seed = result.seedStarted ? "Seed iniciado." : `Torrent gerado; seed pendente: ${result.seedWarning}`;
+    showMessage(result.seedStarted ? "success" : "warning",
+      `Proposta exportada. ${seed}\nInfohash: ${result.infoHash}\n${result.output}`);
+    await refreshSeeds();
+  }
 });
 
 refreshSeeds();

@@ -59,11 +59,12 @@ class SeedManager {
     const existing = this.records.find((record) => record.id === key);
     const value = {id: key, portId: id, version, sha256, packagePath,
       torrentPath: existing?.torrentPath || null, status: existing?.torrentPath ? "ready" : "awaiting-publication",
+      publicationStatus: existing?.publicationStatus || "awaiting-publication",
       uploadLimit: existing?.uploadLimit || "1M"};
     if (existing) Object.assign(existing, value); else this.records.push(value);
     await this.save(); return value;
   }
-  async attachOfficialTorrent(id, torrentPath) {
+  async attachTorrent(id, torrentPath) {
     const record = this.records.find((item) => item.id === id);
     if (!record) throw new Error("Proposta de seed não encontrada.");
     record.infoHash = await validateTorrent(torrentPath, record.packagePath);
@@ -74,7 +75,7 @@ class SeedManager {
     const record = this.records.find((item) => item.id === id);
     if (!record) throw new Error("Seed não encontrado.");
     if (!this.aria2) throw new Error("Backend BitTorrent indisponível.");
-    if (!record.torrentPath) throw new Error("O torrent oficial ainda não foi publicado.");
+    if (!record.torrentPath) throw new Error("O torrent do pacote ainda não foi gerado.");
     if (this.processes.has(id)) return record;
     await Promise.all([fsp.access(record.packagePath), fsp.access(record.torrentPath)]);
     if (await fileSha256(record.packagePath) !== record.sha256)
