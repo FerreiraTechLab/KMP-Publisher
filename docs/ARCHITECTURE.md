@@ -39,6 +39,12 @@ editorial adiciona informações de revisão, valida e publica o torrent recebid
 publica o pacote e
 produz o catálogo assinado consumido pelo Client.
 
+O adaptador GitHub cria ou reutiliza o fork da conta autenticada, grava os
+artefatos sob `submissions/<id>/<versão>/` e abre um pull request contra o
+catálogo oficial. O token fica no cofre criptográfico oferecido pelo Electron e
+não é exposto ao renderer depois da conexão. O CI recalcula hash, tamanho e
+pieces do torrent antes da revisão editorial.
+
 ## Nó do desenvolvedor
 
 Ao exportar ou enviar uma proposta, o Publisher registra o caminho e o SHA-256

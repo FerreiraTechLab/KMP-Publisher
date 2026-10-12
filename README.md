@@ -42,6 +42,16 @@ A primeira implementação oferece:
 - geração determinística do torrent durante a exportação e início imediato da
   semeação pelo computador do desenvolvedor;
 - confirmação posterior de que o catálogo publicou exatamente o mesmo torrent.
+- conexão protegida com o GitHub e abertura automática de pull request com a
+  proposta, o pacote e o torrent para revisão editorial.
+
+## Publicação no GitHub
+
+Na primeira publicação, conecte uma conta usando um token de acesso do GitHub
+com permissão de conteúdo e pull requests no `KMP-catalog`. Quando o cofre
+criptográfico do sistema estiver disponível, a credencial é armazenada por ele;
+ela nunca é incluída na proposta ou enviada ao catálogo. O Publisher cria ou
+reutiliza o fork da conta, abre uma branch e envia a proposta para revisão.
 
 O envio autenticado ao GitHub e o acompanhamento da revisão serão adicionados
 depois que o fluxo local for validado com autores de ports.

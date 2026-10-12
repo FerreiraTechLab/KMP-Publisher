@@ -54,10 +54,11 @@ class SeedManager {
     await fsp.rename(temporary, this.stateFile);
   }
   list() { return this.records.map((record) => ({...record, running: this.processes.has(record.id), backendAvailable: Boolean(this.aria2)})); }
-  async registerProposal({id, version, sha256, packagePath}) {
+  async registerProposal({id, version, sha256, packagePath, proposalPath}) {
     const key = `${id}@${version}`;
     const existing = this.records.find((record) => record.id === key);
     const value = {id: key, portId: id, version, sha256, packagePath,
+      proposalPath: proposalPath || existing?.proposalPath || path.dirname(path.dirname(packagePath)),
       torrentPath: existing?.torrentPath || null, status: existing?.torrentPath ? "ready" : "awaiting-publication",
       publicationStatus: existing?.publicationStatus || "awaiting-publication",
       uploadLimit: existing?.uploadLimit || "1M"};

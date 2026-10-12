@@ -1,4 +1,4 @@
-const {app, BrowserWindow, dialog, ipcMain} = require("electron");
+const {app, BrowserWindow, dialog, ipcMain, safeStorage, shell} = require("electron");
 const fs = require("node:fs/promises");
 const path = require("node:path");
 const {inspectPackage} = require("./core/package-inspection");
@@ -6,9 +6,24 @@ const {createSubmission} = require("./core/submission");
 const {SeedManager, validateTorrent} = require("./core/seed-manager");
 const {findPublishedPackage, loadSignedCatalog} = require("./core/catalog-discovery");
 const {generateTorrent} = require("./core/torrent-builder");
+const {GitHubPublisher} = require("./core/github-publisher");
 
 let seedManager;
+let githubToken = null;
 const CATALOG_URL = "https://ferreiratechlab.github.io/KMP-catalog";
+
+function tokenPath() { return path.join(app.getPath("userData"), "github-token.enc"); }
+async function loadGitHubToken() {
+  if (!safeStorage.isEncryptionAvailable()) return null;
+  try { return safeStorage.decryptString(await fs.readFile(tokenPath())); }
+  catch (error) { if (error.code !== "ENOENT") console.error(error); return null; }
+}
+async function saveGitHubToken(token) {
+  githubToken = token;
+  if (!safeStorage.isEncryptionAvailable()) return false;
+  await fs.writeFile(tokenPath(), safeStorage.encryptString(token), {mode: 0o600});
+  return true;
+}
 
 async function synchronizePublishedSeeds() {
   const key = app.isPackaged ? path.join(process.resourcesPath, "catalog-root.pub") :
@@ -93,7 +108,7 @@ ipcMain.handle("submission:export", async (_event, input, inspected) => {
   await fs.writeFile(path.join(output, "submission.json"),
     JSON.stringify(generated.submission, null, 2) + "\n", {encoding: "utf8", flag: "wx"});
   await seedManager.registerProposal({id: input.id, version: input.version,
-    sha256: inspected.sha256, packagePath});
+    sha256: inspected.sha256, packagePath, proposalPath: output});
   const record = seedManager.records.find((item) => item.id === `${input.id}@${input.version}`);
   const torrent = await generateTorrent(packagePath,
     path.join(torrents, `${path.parse(inspected.fileName).name}.torrent`));
@@ -106,6 +121,29 @@ ipcMain.handle("submission:export", async (_event, input, inspected) => {
 });
 
 ipcMain.handle("seeds:list", () => seedManager.list());
+ipcMain.handle("github:connect", async (_event, token) => {
+  try {
+    const value = String(token || "").trim();
+    const user = await new GitHubPublisher(value).identity();
+    const persisted = await saveGitHubToken(value);
+    return {ok: true, login: user.login, persisted};
+  } catch (error) { return {ok: false, error: error.message}; }
+});
+ipcMain.handle("github:status", async () => {
+  if (!githubToken) return {connected: false};
+  try { const user = await new GitHubPublisher(githubToken).identity(); return {connected: true, login: user.login}; }
+  catch { return {connected: false}; }
+});
+ipcMain.handle("github:publish", async (_event, id) => {
+  try {
+    const record = seedManager.records.find((item) => item.id === id);
+    if (!record) throw new Error("Proposta não encontrada.");
+    const result = await new GitHubPublisher(githubToken).publish(record);
+    record.pullRequest = result; record.submissionStatus = "in-review"; await seedManager.save();
+    return {ok: true, ...result};
+  } catch (error) { return {ok: false, error: error.message}; }
+});
+ipcMain.handle("external:open", (_event, url) => shell.openExternal(url));
 ipcMain.handle("seeds:start", async (_event, id) => {
   try { await seedManager.start(id); return {ok: true}; }
   catch (error) { return {ok: false, error: error.message}; }
@@ -119,6 +157,7 @@ ipcMain.handle("seeds:sync", async () => {
 app.whenReady().then(async () => {
   seedManager = new SeedManager(path.join(app.getPath("userData"), "seeding"));
   await seedManager.load();
+  githubToken = await loadGitHubToken();
   await prepareAllLocalSeeds();
   createWindow();
   synchronizePublishedSeeds().catch(() => {});

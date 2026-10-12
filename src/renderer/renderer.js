@@ -17,11 +17,33 @@ async function refreshSeeds() {
     const publication = seed.publicationStatus === "published" ? "publicado" : "aguardando publicação";
     const distribution = seed.running ? "semeando" : (STATUS_LABELS[seed.status] || seed.status);
     const label = document.createElement("span"); label.textContent = `${seed.portId} ${seed.version} · ${distribution} · ${publication}`;
+    const actions = document.createElement("div"); actions.className = "seed-actions";
+    const publish = document.createElement("button"); publish.type = "button"; publish.className = "primary";
+    if (seed.pullRequest?.pullUrl) {
+      publish.textContent = `Abrir revisão #${seed.pullRequest.pullNumber}`;
+      publish.onclick = () => window.publisher.openExternal(seed.pullRequest.pullUrl);
+    } else {
+      publish.textContent = "Enviar para revisão";
+      publish.onclick = async () => {
+        publish.disabled = true; publish.textContent = "Enviando…";
+        const result = await window.publisher.publishProposal(seed.id);
+        if (!result.ok) showMessage("error", result.error);
+        else showMessage("success", `Proposta enviada para revisão:\n${result.pullUrl}`);
+        await refreshSeeds();
+      };
+    }
     const action = document.createElement("button"); action.type = "button"; action.className = "secondary";
     if (seed.running) { action.textContent = "Parar seed"; action.onclick = async () => { await window.publisher.stopSeed(seed.id); await refreshSeeds(); }; }
     else { action.textContent = "Começar seed"; action.onclick = async () => { const result = await window.publisher.startSeed(seed.id); if (!result.ok) showMessage("error", result.error); await refreshSeeds(); }; }
-    row.append(label, action); return row;
+    actions.append(publish, action); row.append(label, actions); return row;
   }));
+}
+
+async function refreshGitHub() {
+  const status = await window.publisher.githubStatus();
+  document.querySelector("#github-status").textContent = status.connected ?
+    `Conectado como @${status.login}` : "Conta não conectada";
+  document.querySelector("#github-login").classList.toggle("hidden", status.connected);
 }
 
 function formValue() {
@@ -69,7 +91,20 @@ document.querySelector("#export").addEventListener("click", async () => {
 });
 
 refreshSeeds();
+refreshGitHub();
 setInterval(refreshSeeds, 10000);
+document.querySelector("#connect-github").addEventListener("click", async () => {
+  const input = document.querySelector("#github-token");
+  const result = await window.publisher.connectGitHub(input.value);
+  input.value = "";
+  if (!result.ok) showMessage("error", result.error);
+  else {
+    const persistence = result.persisted ? "A credencial foi armazenada pelo cofre do sistema." :
+      "O cofre do sistema não está disponível; a credencial será esquecida ao fechar o aplicativo.";
+    showMessage(result.persisted ? "success" : "warning", `GitHub conectado como @${result.login}. ${persistence}`);
+    await refreshGitHub();
+  }
+});
 document.querySelector("#sync-seeds").addEventListener("click", async () => {
   const result = await window.publisher.syncSeeds();
   if (!result.ok) showMessage("error", result.error);
