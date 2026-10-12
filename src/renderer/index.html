@@ -54,6 +54,13 @@
       <footer><button type="button" id="validate" class="secondary">Validar proposta</button><button type="button" id="export" class="primary">Exportar proposta</button></footer>
     </form>
   </main>
+  <dialog id="seed-modal" class="seed-modal">
+    <div class="modal-heading"><div><span class="eyebrow">SEMEAÇÃO DO PORT</span><h2 id="seed-modal-title">Detalhes</h2></div><button type="button" id="close-seed-modal" class="icon-button" aria-label="Fechar">×</button></div>
+    <div id="seed-modal-status" class="modal-status"></div>
+    <div id="seed-modal-details" class="detail-grid"></div>
+    <div class="path-details"><div><strong>Pacote</strong><code id="seed-package-path"></code></div><div><strong>Torrent</strong><code id="seed-torrent-path"></code></div><div><strong>Infohash</strong><code id="seed-info-hash"></code></div></div>
+    <div class="modal-actions"><button type="button" id="export-seed-torrent" class="secondary">Exportar .torrent</button><button type="button" id="toggle-seed" class="primary"></button></div>
+  </dialog>
   <script src="renderer.js"></script>
 </body>
 </html>

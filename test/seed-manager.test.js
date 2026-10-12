@@ -26,3 +26,18 @@ test("does not seed before its torrent is generated", async (context) => {
   await manager.registerProposal({id: "example", version: "1.0", sha256: "a".repeat(64), packagePath: "/packages/example.zip"});
   await assert.rejects(manager.start("example@1.0"), /torrent do pacote/);
 });
+
+test("reports seed details while it is stopped", async (context) => {
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), "kmp-publisher-seed-"));
+  context.after(() => fs.rm(directory, {recursive: true, force: true}));
+  const packagePath = path.join(directory, "example.zip");
+  await fs.writeFile(packagePath, "package");
+  const manager = new SeedManager(directory, {aria2: "/fake/aria2c"});
+  await manager.load();
+  await manager.registerProposal({id: "example", version: "1.0", sha256: "a".repeat(64), packagePath});
+  const details = await manager.details("example@1.0");
+  assert.equal(details.running, false);
+  assert.equal(details.packageSizeBytes, 7);
+  assert.equal(details.pid, null);
+  assert.equal(details.transfer, null);
+});

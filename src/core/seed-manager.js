@@ -3,6 +3,19 @@ const fsp = require("node:fs/promises");
 const path = require("node:path");
 const {spawn} = require("node:child_process");
 const crypto = require("node:crypto");
+const net = require("node:net");
+
+function availablePort() {
+  return new Promise((resolve, reject) => {
+    const server = net.createServer();
+    server.unref();
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", () => {
+      const port = server.address().port;
+      server.close((error) => error ? reject(error) : resolve(port));
+    });
+  });
+}
 
 async function fileSha256(filePath) {
   const digest = crypto.createHash("sha256");
@@ -39,6 +52,7 @@ class SeedManager {
     this.stateDirectory = stateDirectory;
     this.stateFile = path.join(stateDirectory, "seeds.json");
     this.aria2 = options.aria2 || findExecutable("aria2c");
+    this.fetch = options.fetch || globalThis.fetch;
     this.processes = new Map();
     this.records = [];
   }
@@ -54,6 +68,28 @@ class SeedManager {
     await fsp.rename(temporary, this.stateFile);
   }
   list() { return this.records.map((record) => ({...record, running: this.processes.has(record.id), backendAvailable: Boolean(this.aria2)})); }
+  async details(id) {
+    const record = this.records.find((item) => item.id === id);
+    if (!record) throw new Error("Seed não encontrado.");
+    const runtime = this.processes.get(id);
+    let packageSizeBytes = null;
+    try { packageSizeBytes = (await fsp.stat(record.packagePath)).size; } catch {}
+    let transfer = null;
+    if (runtime?.rpcPort) {
+      try {
+        const parameters = [`token:${runtime.rpcSecret}`,
+          ["gid", "status", "infoHash", "totalLength", "completedLength", "uploadLength",
+            "uploadSpeed", "downloadSpeed", "connections", "numSeeders"]];
+        const response = await this.fetch(`http://127.0.0.1:${runtime.rpcPort}/jsonrpc`, {
+          method: "POST", headers: {"Content-Type": "application/json"},
+          body: JSON.stringify({jsonrpc: "2.0", id: "kmp-publisher", method: "aria2.tellActive", params: parameters})});
+        const body = await response.json();
+        transfer = body.result?.find((item) => !record.infoHash || item.infoHash === record.infoHash) || null;
+      } catch {}
+    }
+    return {...record, running: Boolean(runtime), backendAvailable: Boolean(this.aria2),
+      pid: runtime?.child.pid || null, startedAt: runtime?.startedAt || null, packageSizeBytes, transfer};
+  }
   async registerProposal({id, version, sha256, packagePath, proposalPath}) {
     const key = `${id}@${version}`;
     const existing = this.records.find((record) => record.id === key);
@@ -82,18 +118,22 @@ class SeedManager {
     if (await fileSha256(record.packagePath) !== record.sha256)
       throw new Error("O ZIP mudou depois do registro e não pode ser semeado.");
     await validateTorrent(record.torrentPath, record.packagePath);
+    const rpcPort = await availablePort();
+    const rpcSecret = crypto.randomBytes(24).toString("hex");
     const child = spawn(this.aria2, ["--check-integrity=true", "--continue=true", "--file-allocation=none",
       "--seed-ratio=0", `--max-upload-limit=${record.uploadLimit}`,
       "--bt-enable-lpd=true", "--enable-dht=true", "--enable-peer-exchange=true",
+      "--enable-rpc=true", "--rpc-listen-all=false", `--rpc-listen-port=${rpcPort}`,
+      `--rpc-secret=${rpcSecret}`,
       `--dir=${path.dirname(record.packagePath)}`, record.torrentPath], {stdio: "ignore", windowsHide: true});
-    this.processes.set(id, child); record.status = "checking";
+    this.processes.set(id, {child, rpcPort, rpcSecret, startedAt: new Date().toISOString()}); record.status = "checking";
     child.once("spawn", async () => { record.status = "seeding"; await this.save(); });
     child.once("error", async () => { this.processes.delete(id); record.status = "error"; await this.save(); });
     child.once("exit", async (code) => { this.processes.delete(id); record.status = code === 0 ? "stopped" : "error"; await this.save(); });
     return record;
   }
   async stop(id) {
-    const child = this.processes.get(id); if (child) child.kill("SIGTERM");
+    const runtime = this.processes.get(id); if (runtime) runtime.child.kill("SIGTERM");
     const record = this.records.find((item) => item.id === id);
     if (record) { record.status = "stopped"; await this.save(); }
   }

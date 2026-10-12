@@ -1,8 +1,58 @@
 let inspected = null;
+let selectedSeedId = null;
 const form = document.querySelector("#publisher-form");
 const messages = document.querySelector("#messages");
+const seedModal = document.querySelector("#seed-modal");
 const STATUS_LABELS = {"awaiting-publication": "aguardando publicação", ready: "pronto",
   checking: "verificando", seeding: "semeando", stopped: "parado", error: "erro"};
+
+function formatBytes(value, suffix = "") {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return "indisponível";
+  const units = ["B", "KiB", "MiB", "GiB", "TiB"];
+  let amount = number; let unit = 0;
+  while (amount >= 1024 && unit < units.length - 1) { amount /= 1024; unit += 1; }
+  return `${amount.toFixed(unit ? 1 : 0)} ${units[unit]}${suffix}`;
+}
+
+function detailItem(label, value) {
+  const item = document.createElement("div"); item.className = "detail-item";
+  const title = document.createElement("strong"); title.textContent = label;
+  const content = document.createElement("span"); content.textContent = value;
+  item.append(title, content); return item;
+}
+
+async function showSeedDetails(id, open = true) {
+  const result = await window.publisher.seedDetails(id);
+  if (!result.ok) return showMessage("error", result.error);
+  const seed = result.seed; selectedSeedId = id;
+  document.querySelector("#seed-modal-title").textContent = `${seed.portId} ${seed.version}`;
+  const state = seed.running ? "Semeando agora" : (STATUS_LABELS[seed.status] || seed.status);
+  document.querySelector("#seed-modal-status").textContent =
+    `${state} · ${seed.publicationStatus === "published" ? "publicado no catálogo" : "aguardando publicação"}`;
+  const transfer = seed.transfer || {};
+  const elapsed = seed.startedAt ? Math.max(0, Date.now() - Date.parse(seed.startedAt)) : null;
+  const details = [
+    ["Enviado", formatBytes(transfer.uploadLength)],
+    ["Velocidade", formatBytes(transfer.uploadSpeed, "/s")],
+    ["Conexões", transfer.connections ?? "indisponível"],
+    ["Tempo ativo", elapsed === null ? "—" : `${Math.floor(elapsed / 3600000)}h ${Math.floor(elapsed % 3600000 / 60000)}min`],
+    ["Limite de upload", seed.uploadLimit || "sem limite"],
+    ["Processo", seed.pid ? `PID ${seed.pid}` : "inativo"],
+    ["Tamanho do pacote", formatBytes(seed.packageSizeBytes)],
+    ["Backend", seed.backendAvailable ? "aria2 disponível" : "indisponível"],
+    ["Estado do torrent", transfer.status || (seed.running ? "iniciando" : "parado")]
+  ];
+  document.querySelector("#seed-modal-details").replaceChildren(...details.map(([label, value]) => detailItem(label, String(value))));
+  document.querySelector("#seed-package-path").textContent = seed.packagePath || "—";
+  document.querySelector("#seed-torrent-path").textContent = seed.torrentPath || "—";
+  document.querySelector("#seed-info-hash").textContent = seed.infoHash || "—";
+  const toggle = document.querySelector("#toggle-seed");
+  toggle.textContent = seed.running ? "Parar semeação" : "Retomar semeação";
+  toggle.dataset.running = seed.running ? "true" : "false";
+  document.querySelector("#export-seed-torrent").disabled = !seed.torrentPath;
+  if (open && !seedModal.open) seedModal.showModal();
+}
 
 async function refreshSeeds() {
   const seeds = await window.publisher.listSeeds();
@@ -33,8 +83,7 @@ async function refreshSeeds() {
       };
     }
     const action = document.createElement("button"); action.type = "button"; action.className = "secondary";
-    if (seed.running) { action.textContent = "Parar seed"; action.onclick = async () => { await window.publisher.stopSeed(seed.id); await refreshSeeds(); }; }
-    else { action.textContent = "Começar seed"; action.onclick = async () => { const result = await window.publisher.startSeed(seed.id); if (!result.ok) showMessage("error", result.error); await refreshSeeds(); }; }
+    action.textContent = "Detalhes"; action.onclick = () => showSeedDetails(seed.id);
     actions.append(publish, action); row.append(label, actions); return row;
   }));
 }
@@ -112,4 +161,21 @@ document.querySelector("#sync-seeds").addEventListener("click", async () => {
     result.activated ? `${result.activated} publicação(ões) confirmada(s).` :
       `Catálogo ${result.sequence} verificado. A proposta continua aguardando publicação; o seed local permanece ativo.`);
   await refreshSeeds();
+});
+document.querySelector("#close-seed-modal").addEventListener("click", () => seedModal.close());
+document.querySelector("#toggle-seed").addEventListener("click", async (event) => {
+  if (!selectedSeedId) return;
+  event.currentTarget.disabled = true;
+  const result = event.currentTarget.dataset.running === "true" ?
+    await window.publisher.stopSeed(selectedSeedId) : await window.publisher.startSeed(selectedSeedId);
+  if (!result.ok) showMessage("error", result.error);
+  await refreshSeeds(); await showSeedDetails(selectedSeedId, false);
+  event.currentTarget.disabled = false;
+});
+document.querySelector("#export-seed-torrent").addEventListener("click", async () => {
+  if (!selectedSeedId) return;
+  const result = await window.publisher.exportTorrent(selectedSeedId);
+  if (result.canceled) return;
+  if (!result.ok) showMessage("error", result.error);
+  else showMessage("success", `Torrent exportado para:\n${result.filePath}`);
 });

@@ -121,6 +121,23 @@ ipcMain.handle("submission:export", async (_event, input, inspected) => {
 });
 
 ipcMain.handle("seeds:list", () => seedManager.list());
+ipcMain.handle("seeds:details", async (_event, id) => {
+  try { return {ok: true, seed: await seedManager.details(id)}; }
+  catch (error) { return {ok: false, error: error.message}; }
+});
+ipcMain.handle("seeds:export-torrent", async (_event, id) => {
+  try {
+    const record = seedManager.records.find((item) => item.id === id);
+    if (!record?.torrentPath) throw new Error("Este port ainda não possui um torrent.");
+    const selected = await dialog.showSaveDialog({title: "Exportar torrent",
+      defaultPath: path.basename(record.torrentPath),
+      filters: [{name: "Arquivo BitTorrent", extensions: ["torrent"]}]});
+    if (selected.canceled || !selected.filePath) return {ok: false, canceled: true};
+    if (path.resolve(selected.filePath) !== path.resolve(record.torrentPath))
+      await fs.copyFile(record.torrentPath, selected.filePath);
+    return {ok: true, filePath: selected.filePath};
+  } catch (error) { return {ok: false, error: error.message}; }
+});
 ipcMain.handle("github:connect", async (_event, token) => {
   try {
     const value = String(token || "").trim();
