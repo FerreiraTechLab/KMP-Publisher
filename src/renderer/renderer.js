@@ -42,7 +42,7 @@ async function refreshSeeds() {
 async function refreshGitHub() {
   const status = await window.publisher.githubStatus();
   document.querySelector("#github-status").textContent = status.connected ?
-    `Conectado como @${status.login}` : "Conta não conectada";
+    `Conectado como @${status.login}. Agora envie uma proposta para revisão.` : "Conta não conectada";
   document.querySelector("#github-login").classList.toggle("hidden", status.connected);
 }
 
