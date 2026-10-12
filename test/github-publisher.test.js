@@ -24,28 +24,23 @@ test("uploads proposal artifacts and opens a pull request", async (context) => {
   await fs.writeFile(path.join(packages, "demo.zip"), "zip");
   await fs.writeFile(path.join(torrents, "demo.torrent"), "torrent");
   const calls = [];
+  const gitCalls = [];
   const fetch = async (url, options = {}) => {
     const route = new URL(url).pathname; calls.push([route, options]);
     if (route === "/user") return response(200, {login: "developer"});
     if (route === "/repos/FerreiraTechLab/KMP-catalog") return response(200, {default_branch: "main"});
-    if (route.endsWith("/git/ref/heads/main")) return response(200, {object: {sha: "base"}});
-    if (route.endsWith("/git/commits/base")) return response(200, {tree: {sha: "base-tree"}});
     if (route === "/repos/developer/KMP-catalog") return response(200, {fork: true});
-    if (route.endsWith("/git/blobs")) return response(201, {sha: `blob-${calls.length}`});
-    if (route.endsWith("/git/trees")) return response(201, {sha: "tree"});
-    if (route.endsWith("/git/commits")) return response(201, {sha: "commit"});
-    if (route.endsWith("/git/refs")) return response(201, {ref: "branch"});
+    if (route === "/repos/developer/KMP-catalog/merge-upstream") return response(200, {message: "up to date"});
     if (route.endsWith("/pulls")) return response(201, {number: 12, html_url: "https://github.com/FerreiraTechLab/KMP-catalog/pull/12"});
     return response(404, {message: route});
   };
-  const publisher = new GitHubPublisher("secret", {fetch});
+  const publisher = new GitHubPublisher("secret", {fetch,
+    git: async (args, options) => { gitCalls.push([args, options]); }});
   const result = await publisher.publish({portId: "demo", version: "1.0", proposalPath: directory,
     packagePath: path.join(packages, "demo.zip"), torrentPath: path.join(torrents, "demo.torrent"),
     sha256: "a".repeat(64), infoHash: "b".repeat(40)});
   assert.equal(result.pullNumber, 12);
-  assert.equal(calls.filter(([route]) => route.endsWith("/git/blobs")).length, 3);
-  const treeCall = calls.find(([route]) => route.endsWith("/git/trees"));
-  const tree = JSON.parse(treeCall[1].body).tree;
-  assert.deepEqual(tree.map((item) => item.path), ["submissions/demo/1.0/submission.json",
-    "submissions/demo/1.0/packages/demo.zip", "submissions/demo/1.0/torrents/demo.torrent"]);
+  assert.ok(calls.some(([route]) => route.endsWith("/merge-upstream")));
+  assert.ok(gitCalls.some(([args]) => args[0] === "push"));
+  assert.ok(gitCalls.every(([, options]) => !options.env.GIT_CONFIG_VALUE_0.includes("secret")));
 });
