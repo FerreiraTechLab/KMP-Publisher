@@ -10,6 +10,8 @@ contextBridge.exposeInMainWorld("publisher", {
   startSeed: (id) => ipcRenderer.invoke("seeds:start", id),
   stopSeed: (id) => ipcRenderer.invoke("seeds:stop", id),
   syncSeeds: () => ipcRenderer.invoke("seeds:sync"),
+  communityStatus: () => ipcRenderer.invoke("community:status"),
+  setCommunity: (enabled) => ipcRenderer.invoke("community:set", enabled),
   connectGitHub: (token) => ipcRenderer.invoke("github:connect", token),
   githubStatus: () => ipcRenderer.invoke("github:status"),
   publishProposal: (id) => ipcRenderer.invoke("github:publish", id),

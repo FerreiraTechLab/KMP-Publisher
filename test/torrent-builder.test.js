@@ -18,4 +18,19 @@ test("generates deterministic torrents", async (context) => {
   assert.equal(first.infoHash, second.infoHash);
   assert.deepEqual(await fs.readFile(firstPath), await fs.readFile(secondPath));
   assert.equal(await validateTorrent(firstPath, packagePath), first.infoHash);
+  assert.equal(first.trackers.length, 2);
+});
+
+test("rejects private torrents because they disable DHT", async (context) => {
+  const bencode = (await import("bencode")).default;
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), "kmp-private-torrent-"));
+  context.after(() => fs.rm(directory, {recursive: true, force: true}));
+  const packagePath = path.join(directory, "example.zip");
+  const torrentPath = path.join(directory, "example.torrent");
+  await fs.writeFile(packagePath, Buffer.alloc(1024, 7));
+  await generateTorrent(packagePath, torrentPath);
+  const document = bencode.decode(await fs.readFile(torrentPath));
+  document.info.private = 1;
+  await fs.writeFile(torrentPath, bencode.encode(document));
+  await assert.rejects(validateTorrent(torrentPath, packagePath), /não pode ser privado/);
 });

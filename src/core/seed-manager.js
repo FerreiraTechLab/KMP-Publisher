@@ -56,6 +56,14 @@ async function validateTorrent(torrentPath, packagePath) {
   const info = document && document.info;
   if (!info || info.files || !Number.isSafeInteger(info.length))
     throw new Error("O torrent oficial precisa conter somente um arquivo.");
+  if (Number(info.private || 0) !== 0)
+    throw new Error("O torrent oficial não pode ser privado, pois todos os nós usam DHT.");
+  const tiers = Array.isArray(document["announce-list"]) ? document["announce-list"] : [];
+  const trackers = new Set(tiers.flatMap((tier) => Array.isArray(tier) ? tier : [tier])
+    .map((value) => Buffer.from(value).toString("utf8")).filter(Boolean));
+  if (document.announce) trackers.add(Buffer.from(document.announce).toString("utf8"));
+  if (trackers.size < 2)
+    throw new Error("O torrent oficial precisa conter ao menos dois trackers públicos.");
   const name = info.name instanceof Uint8Array ? Buffer.from(info.name).toString("utf8") : String(info.name || "");
   const stat = await fsp.stat(packagePath);
   if (name !== path.basename(packagePath) || info.length !== stat.size)
@@ -213,6 +221,12 @@ class SeedManager {
         transfer.peers = Array.isArray(peers) ? peers.length : 0;
         transfer.remotePeers = (peers || []).filter((peer) => !isPrivateAddress(peer.ip)).length;
         transfer.holePunchPeers = (peers || []).filter((peer) => peer.source === "C").length;
+        if (this.backendKind === "kmp-torrentd") {
+          const network = await this.rpc("kmp.getNetworkStats");
+          const torrentNetwork = (network.torrents || []).find((item) =>
+            String(item.infoHash || "").toLowerCase() === String(record.infoHash || "").toLowerCase());
+          transfer.network = {...network, torrents: undefined, torrent: torrentNetwork || null};
+        }
       } catch {}
     }
     return {...record, running: Boolean(runtime), backendAvailable: Boolean(this.backend), backendKind: this.backendKind,
@@ -260,6 +274,35 @@ class SeedManager {
     this.processes.set(id, {gid, startedAt: new Date().toISOString()});
     record.status = "seeding"; delete record.error; await this.save();
     return record;
+  }
+  async mirrorCatalog(catalog, limitBytes = 4 * 1024 * 1024 * 1024) {
+    await this.ensureDaemon();
+    const candidates = catalog.schemaVersion === 3 ?
+      catalog.items.flatMap((item) => item.release?.variants || []).map((variant) => variant.download) :
+      catalog.items;
+    const unique = new Map();
+    for (const download of candidates) {
+      if (download?.torrent && download?.infoHash && Number.isSafeInteger(download.sizeBytes))
+        unique.set(String(download.infoHash).toLowerCase(), download);
+    }
+    const selected = [...unique.values()].sort((a, b) => a.sizeBytes - b.sizeBytes);
+    const existing = new Set();
+    for (const [method, params] of [["aria2.tellActive", [["infoHash"]]],
+      ["aria2.tellWaiting", [0, 1000, ["infoHash"]]], ["aria2.tellStopped", [0, 1000, ["infoHash"]]]])
+      for (const item of await this.rpc(method, params) || []) existing.add(String(item.infoHash || "").toLowerCase());
+    const directory = path.join(this.stateDirectory, "community", "packages");
+    await fsp.mkdir(directory, {recursive: true});
+    let reservedBytes = 0, added = 0, managed = 0;
+    for (const download of selected) {
+      if (reservedBytes + download.sizeBytes > limitBytes) continue;
+      reservedBytes += download.sizeBytes; managed += 1;
+      if (existing.has(String(download.infoHash).toLowerCase())) continue;
+      await this.rpc("aria2.addTorrent", [download.torrent, [], {dir: directory,
+        "continue": "true", "check-integrity": "true", "seed-ratio": "0",
+        "auto-file-renaming": "false"}]);
+      added += 1;
+    }
+    return {managed, added, reservedBytes, limitBytes};
   }
   async stop(id) {
     const runtime = this.processes.get(id);

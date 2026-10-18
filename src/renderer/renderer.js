@@ -45,6 +45,11 @@ async function showSeedDetails(id, open = true) {
     ["Conexões", transfer.connections ?? "indisponível"],
     ["Peers externos", transfer.remotePeers ?? "indisponível"],
     ["Hole punch", transfer.holePunchPeers ?? "indisponível"],
+    ["Peers descobertos", transfer.network?.torrent?.knownPeers ?? "indisponível"],
+    ["Origem dos peers", transfer.network?.torrent?.peerSources ?
+      Object.entries(transfer.network.torrent.peerSources).map(([source, count]) => `${source}: ${count}`).join(", ") :
+      "indisponível"],
+    ["Conexões por punch", transfer.network?.successfulAfterHolepunchConnect ?? "indisponível"],
     ["Tempo ativo", elapsed === null ? "—" : `${Math.floor(elapsed / 3600000)}h ${Math.floor(elapsed % 3600000 / 60000)}min`],
     ["Limite de upload", seed.uploadLimit || "sem limite"],
     ["Processo", seed.pid ? `PID ${seed.pid}` : "inativo"],
@@ -57,7 +62,7 @@ async function showSeedDetails(id, open = true) {
           "sem entrada direta; BEP 55 disponível" : "somente saída/rede local"],
     ["Tamanho do pacote", formatBytes(seed.packageSizeBytes)],
     ["Backend", seed.backendAvailable ?
-      (seed.backendKind === "kmp-torrentd" ? "KMP Torrent (BEP 55)" : "aria2 disponível") :
+      (seed.backendKind === "kmp-torrentd" ? "KMP Torrent (BitTorrent padrão)" : "aria2 disponível") :
       "indisponível"],
     ["Estado do torrent", transfer.status || (seed.running ? "iniciando" : "parado")]
   ];
@@ -199,4 +204,15 @@ document.querySelector("#export-seed-torrent").addEventListener("click", async (
   if (result.canceled) return;
   if (!result.ok) showMessage("error", result.error);
   else showMessage("success", `Torrent exportado para:\n${result.filePath}`);
+});
+
+window.publisher.communityStatus().then((status) => { document.querySelector("#community-node").checked = status.enabled; });
+document.querySelector("#community-node").addEventListener("change", async (event) => {
+  event.currentTarget.disabled = true;
+  try {
+    const result = await window.publisher.setCommunity(event.currentTarget.checked);
+    const managed = result.result?.community?.managed || 0;
+    showMessage("success", result.enabled ? `Nó comunitário ativado: ${managed} torrent(s) gerenciado(s).` : "Nó comunitário desativado.");
+  } catch (error) { event.currentTarget.checked = !event.currentTarget.checked; showMessage("error", error.message); }
+  event.currentTarget.disabled = false;
 });

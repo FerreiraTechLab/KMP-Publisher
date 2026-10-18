@@ -10,6 +10,7 @@ const {GitHubPublisher} = require("./core/github-publisher");
 
 let seedManager;
 let githubToken = null;
+let communityEnabled = false;
 const CATALOG_URL = "https://ferreiratechlab.github.io/KMP-catalog";
 
 function tokenPath() { return path.join(app.getPath("userData"), "github-token.enc"); }
@@ -50,7 +51,9 @@ async function synchronizePublishedSeeds() {
     if (!seedManager.processes.has(record.id)) await seedManager.start(record.id);
     activated += 1;
   }
-  return {sequence: catalog.sequence, activated};
+  let community = null;
+  if (communityEnabled) community = await seedManager.mirrorCatalog(catalog);
+  return {sequence: catalog.sequence, activated, community};
 }
 
 async function prepareLocalSeed(record, torrentDirectory) {
@@ -120,6 +123,15 @@ ipcMain.handle("submission:export", async (_event, input, inspected) => {
     seedStarted: !seedWarning, seedWarning};
 });
 
+
+ipcMain.handle("community:status", () => ({enabled: communityEnabled}));
+ipcMain.handle("community:set", async (_event, enabled) => {
+  communityEnabled = Boolean(enabled);
+  await fs.writeFile(path.join(app.getPath("userData"), "community.json"),
+    JSON.stringify({enabled: communityEnabled}) + "\n");
+  const result = communityEnabled ? await synchronizePublishedSeeds() : null;
+  return {ok: true, enabled: communityEnabled, result};
+});
 ipcMain.handle("seeds:list", () => seedManager.list());
 ipcMain.handle("seeds:details", async (_event, id) => {
   try { return {ok: true, seed: await seedManager.details(id)}; }
@@ -179,6 +191,7 @@ app.whenReady().then(async () => {
   seedManager = new SeedManager(path.join(app.getPath("userData"), "seeding"));
   await seedManager.load();
   githubToken = await loadGitHubToken();
+  try { communityEnabled = JSON.parse(await fs.readFile(path.join(app.getPath("userData"), "community.json"))).enabled === true; } catch {}
   await prepareAllLocalSeeds();
   createWindow();
   synchronizePublishedSeeds().catch(() => {});
