@@ -33,7 +33,8 @@ async function showSeedDetails(id, open = true) {
   const seed = result.seed; selectedSeedId = id;
   document.querySelector("#seed-modal-title").textContent = `${seed.portId} ${seed.version}`;
   const state = seed.running ? "Semeando agora" : (STATUS_LABELS[seed.status] || seed.status);
-  document.querySelector("#seed-modal-status").textContent =
+  document.querySelector("#seed-modal-status").textContent = seed.status === "error" && seed.error ?
+    `Erro: ${seed.error}` :
     `${state} · ${seed.publicationStatus === "published" ? "publicado no catálogo" : "aguardando publicação"}`;
   const transfer = seed.transfer || {};
   const mapping = seed.portMapping || {};
@@ -43,6 +44,7 @@ async function showSeedDetails(id, open = true) {
     ["Velocidade", formatBytes(transfer.uploadSpeed, "/s")],
     ["Conexões", transfer.connections ?? "indisponível"],
     ["Peers externos", transfer.remotePeers ?? "indisponível"],
+    ["Hole punch", transfer.holePunchPeers ?? "indisponível"],
     ["Tempo ativo", elapsed === null ? "—" : `${Math.floor(elapsed / 3600000)}h ${Math.floor(elapsed % 3600000 / 60000)}min`],
     ["Limite de upload", seed.uploadLimit || "sem limite"],
     ["Processo", seed.pid ? `PID ${seed.pid}` : "inativo"],
@@ -51,9 +53,12 @@ async function showSeedDetails(id, open = true) {
     ["Endereço externo", mapping.externalAddress || "não detectado"],
     ["Acessibilidade", mapping.addressScope === "cgnat" ? "CGNAT: conexão direta bloqueada" :
       mapping.internetReachable ? "provável pela internet" : mapping.active ?
-        "mapeada; teste externo pendente" : "somente saída/rede local"],
+        "mapeada; teste externo pendente" : seed.backendKind === "kmp-torrentd" ?
+          "sem entrada direta; BEP 55 disponível" : "somente saída/rede local"],
     ["Tamanho do pacote", formatBytes(seed.packageSizeBytes)],
-    ["Backend", seed.backendAvailable ? "aria2 disponível" : "indisponível"],
+    ["Backend", seed.backendAvailable ?
+      (seed.backendKind === "kmp-torrentd" ? "KMP Torrent (BEP 55)" : "aria2 disponível") :
+      "indisponível"],
     ["Estado do torrent", transfer.status || (seed.running ? "iniciando" : "parado")]
   ];
   document.querySelector("#seed-modal-details").replaceChildren(...details.map(([label, value]) => detailItem(label, String(value))));

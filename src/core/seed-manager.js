@@ -4,6 +4,7 @@ const path = require("node:path");
 const {spawn} = require("node:child_process");
 const crypto = require("node:crypto");
 const net = require("node:net");
+const dgram = require("node:dgram");
 const {PortMapper} = require("./port-mapper");
 
 function availablePort() {
@@ -16,6 +17,31 @@ function availablePort() {
       server.close((error) => error ? reject(error) : resolve(port));
     });
   });
+}
+
+async function availableBitTorrentPort(preferred = 6881) {
+  for (let port = preferred; port < preferred + 100; port += 1) {
+    const tcp = net.createServer();
+    const udp = dgram.createSocket("udp4");
+    try {
+      await new Promise((resolve, reject) => {
+        tcp.once("error", reject);
+        tcp.listen(port, "0.0.0.0", resolve);
+      });
+      await new Promise((resolve, reject) => {
+        udp.once("error", reject);
+        udp.bind(port, "0.0.0.0", resolve);
+      });
+      return port;
+    } catch {}
+    finally {
+      await new Promise((resolve) => tcp.listening ? tcp.close(resolve) : resolve());
+      await new Promise((resolve) => {
+        try { udp.close(resolve); } catch { resolve(); }
+      });
+    }
+  }
+  throw new Error(`Nenhuma porta TCP/UDP livre entre ${preferred} e ${preferred + 99}.`);
 }
 
 async function fileSha256(filePath) {
@@ -48,21 +74,41 @@ function findExecutable(name, environment = process.env) {
   return null;
 }
 
+function bundledTorrentd() {
+  const executable = process.platform === "win32" ? "kmp-torrentd.exe" : "kmp-torrentd";
+  const platformArch = `${process.platform}-${process.arch}`;
+  const candidates = [
+    path.join(process.resourcesPath || "", "torrentd", platformArch, executable),
+    path.resolve(__dirname, "../../resources/torrentd", platformArch, executable)
+  ];
+  return candidates.find((candidate) => {
+    try { fs.accessSync(candidate, fs.constants.X_OK); return true; } catch { return false; }
+  }) || null;
+}
+
 class SeedManager {
   constructor(stateDirectory, options = {}) {
     this.stateDirectory = stateDirectory;
     this.stateFile = path.join(stateDirectory, "seeds.json");
+    this.torrentd = options.torrentd === undefined ?
+      (options.aria2 === undefined ? (bundledTorrentd() || findExecutable("kmp-torrentd")) : null) :
+      options.torrentd;
     this.aria2 = options.aria2 || findExecutable("aria2c");
+    this.backend = this.torrentd || this.aria2;
+    this.backendKind = this.torrentd ? "kmp-torrentd" : "aria2";
     this.fetch = options.fetch || globalThis.fetch;
     this.spawn = options.spawn || spawn;
     this.allocatePort = options.availablePort || availablePort;
     this.listenPort = options.listenPort || 6881;
+    this.allocateListenPort = options.availableListenPort || availableBitTorrentPort;
+    this.portMapperProvided = Boolean(options.portMapper);
     this.portMapper = options.portMapper || new PortMapper(this.listenPort);
     this.daemon = null;
     this.daemonStopping = false;
     this.exitPromise = null;
     this.processes = new Map();
     this.records = [];
+    this.lastDaemonError = "";
   }
   async load() {
     await fsp.mkdir(this.stateDirectory, {recursive: true});
@@ -75,7 +121,7 @@ class SeedManager {
     await fsp.writeFile(temporary, JSON.stringify({version: 1, records: this.records}, null, 2) + "\n");
     await fsp.rename(temporary, this.stateFile);
   }
-  list() { return this.records.map((record) => ({...record, running: this.processes.has(record.id), backendAvailable: Boolean(this.aria2)})); }
+  list() { return this.records.map((record) => ({...record, running: this.processes.has(record.id), backendAvailable: Boolean(this.backend), backendKind: this.backendKind})); }
   async rpc(method, params = []) {
     if (!this.daemon) throw new Error("Daemon BitTorrent indisponível.");
     const response = await this.fetch(`http://127.0.0.1:${this.daemon.rpcPort}/jsonrpc`, {
@@ -92,20 +138,36 @@ class SeedManager {
       try { await this.rpc("aria2.getVersion"); return; }
       catch (error) { lastError = error; await new Promise((resolve) => setTimeout(resolve, 100)); }
     }
-    throw new Error(`O daemon BitTorrent não iniciou na porta ${this.listenPort}: ${lastError?.message || "tempo esgotado"}`);
+    const detail = this.lastDaemonError || lastError?.message || "tempo esgotado";
+    throw new Error(`O daemon BitTorrent não iniciou na porta ${this.listenPort}: ${detail}`);
   }
   async ensureDaemon() {
     if (this.daemon) return this.daemon;
-    if (!this.aria2) throw new Error("Backend BitTorrent indisponível.");
+    if (!this.backend) throw new Error("Backend BitTorrent indisponível.");
+    const selectedPort = await this.allocateListenPort(this.listenPort);
+    if (selectedPort !== this.listenPort) {
+      this.listenPort = selectedPort;
+      if (!this.portMapperProvided) this.portMapper = new PortMapper(this.listenPort);
+    }
     const rpcPort = await this.allocatePort();
     const rpcSecret = crypto.randomBytes(24).toString("hex");
-    const child = this.spawn(this.aria2, ["--enable-rpc=true", "--rpc-listen-all=false",
+    const args = this.backendKind === "kmp-torrentd" ? [
+      `--rpc-listen=127.0.0.1:${rpcPort}`, `--rpc-secret=${rpcSecret}`,
+      `--state-dir=${path.join(this.stateDirectory, "torrentd")}`,
+      `--data-dir=${path.join(this.stateDirectory, "downloads")}`,
+      `--listen-port=${this.listenPort}`, "--upload-limit=1M"
+    ] : ["--enable-rpc=true", "--rpc-listen-all=false",
       `--rpc-listen-port=${rpcPort}`, `--rpc-secret=${rpcSecret}`,
       "--continue=true", "--auto-file-renaming=false", "--file-allocation=none",
       "--enable-dht=true", "--enable-peer-exchange=true", "--bt-enable-lpd=true",
       `--listen-port=${this.listenPort}`,
-      `--dht-listen-port=${this.listenPort}`, "--seed-ratio=0", "--console-log-level=warn"],
-    {stdio: "ignore", windowsHide: true});
+      `--dht-listen-port=${this.listenPort}`, "--seed-ratio=0", "--console-log-level=warn"];
+    const child = this.spawn(this.backend, args,
+    {stdio: ["ignore", "ignore", "pipe"], windowsHide: true});
+    this.lastDaemonError = "";
+    if (child.stderr) child.stderr.on("data", (chunk) => {
+      this.lastDaemonError = String(chunk).trim().split(/\r?\n/).at(-1).slice(0, 500);
+    });
     this.daemon = {child, rpcPort, rpcSecret, startedAt: new Date().toISOString()};
     this.daemonStopping = false;
     child.once("error", () => { this.exitPromise = this.handleDaemonExit(true); });
@@ -150,9 +212,10 @@ class SeedManager {
         const peers = await this.rpc("aria2.getPeers", [runtime.gid]);
         transfer.peers = Array.isArray(peers) ? peers.length : 0;
         transfer.remotePeers = (peers || []).filter((peer) => !isPrivateAddress(peer.ip)).length;
+        transfer.holePunchPeers = (peers || []).filter((peer) => peer.source === "C").length;
       } catch {}
     }
-    return {...record, running: Boolean(runtime), backendAvailable: Boolean(this.aria2),
+    return {...record, running: Boolean(runtime), backendAvailable: Boolean(this.backend), backendKind: this.backendKind,
       pid: this.daemon?.child.pid || null, startedAt: runtime?.startedAt || null,
       listenPort: this.listenPort, portMapping: this.portMapper.details(), packageSizeBytes, transfer};
   }
@@ -177,7 +240,7 @@ class SeedManager {
   async start(id) {
     const record = this.records.find((item) => item.id === id);
     if (!record) throw new Error("Seed não encontrado.");
-    if (!this.aria2) throw new Error("Backend BitTorrent indisponível.");
+    if (!this.backend) throw new Error("Backend BitTorrent indisponível.");
     if (!record.torrentPath) throw new Error("O torrent do pacote ainda não foi gerado.");
     if (this.processes.has(id)) return record;
     await Promise.all([fsp.access(record.packagePath), fsp.access(record.torrentPath)]);
@@ -195,7 +258,7 @@ class SeedManager {
       {dir: path.dirname(record.packagePath), "check-integrity": "true", "continue": "true",
         "seed-ratio": "0", "max-upload-limit": record.uploadLimit}]);
     this.processes.set(id, {gid, startedAt: new Date().toISOString()});
-    record.status = "seeding"; await this.save();
+    record.status = "seeding"; delete record.error; await this.save();
     return record;
   }
   async stop(id) {
@@ -221,7 +284,8 @@ class SeedManager {
 }
 
 function isPrivateAddress(address) {
-  const value = String(address || "").toLowerCase();
+  let value = String(address || "").toLowerCase();
+  if (value.startsWith("::ffff:")) value = value.slice(7);
   if (value === "::1" || value.startsWith("fe80:") || value.startsWith("fc") || value.startsWith("fd")) return true;
   const parts = value.split(".").map(Number);
   return parts.length === 4 && parts.every(Number.isInteger) &&
@@ -229,4 +293,5 @@ function isPrivateAddress(address) {
       (parts[0] === 172 && parts[1] >= 16 && parts[1] <= 31) || (parts[0] === 169 && parts[1] === 254));
 }
 
-module.exports = {SeedManager, availablePort, findExecutable, isPrivateAddress, validateTorrent};
+module.exports = {SeedManager, availableBitTorrentPort, availablePort, bundledTorrentd,
+  findExecutable, isPrivateAddress, validateTorrent};

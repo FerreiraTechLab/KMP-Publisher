@@ -7,6 +7,7 @@ const {SeedManager, isPrivateAddress} = require("../src/core/seed-manager");
 
 test("classifies local and Internet peer addresses", () => {
   assert.equal(isPrivateAddress("192.168.0.25"), true);
+  assert.equal(isPrivateAddress("::ffff:192.168.0.25"), true);
   assert.equal(isPrivateAddress("10.0.0.2"), true);
   assert.equal(isPrivateAddress("2001:4860:4860::8888"), false);
   assert.equal(isPrivateAddress("8.8.8.8"), false);

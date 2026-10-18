@@ -29,7 +29,8 @@
       "schemas/**/*"
     ],
     "extraResources": [
-      {"from": "resources/catalog-root.pub", "to": "catalog-root.pub"}
+      {"from": "resources/catalog-root.pub", "to": "catalog-root.pub"},
+      {"from": "resources/torrentd/${os}-${arch}", "to": "torrentd/${os}-${arch}"}
     ],
     "directories": {
       "output": "release"

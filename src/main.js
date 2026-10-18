@@ -163,7 +163,11 @@ ipcMain.handle("github:publish", async (_event, id) => {
 ipcMain.handle("external:open", (_event, url) => shell.openExternal(url));
 ipcMain.handle("seeds:start", async (_event, id) => {
   try { await seedManager.start(id); return {ok: true}; }
-  catch (error) { return {ok: false, error: error.message}; }
+  catch (error) {
+    const record = seedManager.records.find((item) => item.id === id);
+    if (record) { record.status = "error"; record.error = error.message; await seedManager.save(); }
+    return {ok: false, error: error.message};
+  }
 });
 ipcMain.handle("seeds:stop", async (_event, id) => { await seedManager.stop(id); return {ok: true}; });
 ipcMain.handle("seeds:sync", async () => {
