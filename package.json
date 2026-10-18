@@ -1,6 +1,6 @@
 {
   "name": "kmp-publisher",
-  "version": "0.1.0",
+  "version": "0.2.1",
   "description": "Interface multiplataforma para propor ports ao catálogo KMP",
   "main": "src/main.js",
   "author": "FerreiraTechLab",
@@ -29,8 +29,14 @@
       "schemas/**/*"
     ],
     "extraResources": [
-      {"from": "resources/catalog-root.pub", "to": "catalog-root.pub"},
-      {"from": "resources/torrentd/${os}-${arch}", "to": "torrentd/${os}-${arch}"}
+      {
+        "from": "resources/catalog-root.pub",
+        "to": "catalog-root.pub"
+      },
+      {
+        "from": "resources/torrentd/${os}-${arch}",
+        "to": "torrentd/${os}-${arch}"
+      }
     ],
     "directories": {
       "output": "release"

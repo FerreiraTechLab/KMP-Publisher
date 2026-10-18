@@ -58,3 +58,17 @@ depois que o fluxo local for validado com autores de ports.
 
 Veja [docs/PRODUCT.md](docs/PRODUCT.md) e
 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+
+## Interface de gerenciamento
+
+A versão 0.2 abre com uma tela de inicialização enquanto restaura os torrents,
+as métricas e o catálogo. O acesso ao dashboard exige uma conta GitHub válida.
+O dashboard mostra ports publicados, propostas aguardando revisão, tráfego
+acumulado e downloads equivalentes. Downloads equivalentes são calculados
+pelos bytes efetivamente enviados divididos pelo tamanho de cada pacote; o
+BitTorrent não informa de forma confiável quando um peer remoto termina o
+arquivo inteiro.
+
+Os contadores ficam no diretório de dados do aplicativo e sobrevivem a
+reinicializações. Cada card abre os detalhes de distribuição e permite iniciar
+uma nova revisão com os campos existentes preenchidos e a revisão incrementada.

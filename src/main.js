@@ -7,10 +7,14 @@ const {SeedManager, validateTorrent} = require("./core/seed-manager");
 const {findPublishedPackage, loadSignedCatalog} = require("./core/catalog-discovery");
 const {generateTorrent} = require("./core/torrent-builder");
 const {GitHubPublisher} = require("./core/github-publisher");
+const {MetricsStore} = require("./core/metrics-store");
+const {resolveProposalPath} = require("./core/proposal-record");
 
 let seedManager;
+let metricsStore;
+let applicationReady = false;
 let githubToken = null;
-let communityEnabled = false;
+let communityEnabled = true;
 const CATALOG_URL = "https://ferreiratechlab.github.io/KMP-catalog";
 
 function tokenPath() { return path.join(app.getPath("userData"), "github-token.enc"); }
@@ -24,6 +28,43 @@ async function saveGitHubToken(token) {
   if (!safeStorage.isEncryptionAvailable()) return false;
   await fs.writeFile(tokenPath(), safeStorage.encryptString(token), {mode: 0o600});
   return true;
+}
+
+
+async function githubIdentity() {
+  if (!githubToken) return {connected: false};
+  try {
+    const user = await new GitHubPublisher(githubToken).identity();
+    return {connected: true, login: user.login};
+  } catch { return {connected: false}; }
+}
+
+function metadataFromSubmission(document) {
+  const project = document.project || {}; const release = document.release || {};
+  const variant = release.variants?.[0] || {}; const compatibility = variant.compatibility || {};
+  const requirements = variant.requirements || {}; const install = variant.install || {};
+  return {id: project.id, name: project.name, description: project.description,
+    version: release.version, revision: String((release.revision || 1) + 1),
+    channel: release.channel || "stable", releaseNotes: release.notes || "",
+    homepage: project.homepage || "", source: project.source || "",
+    porterName: project.porter?.name || "", porterUrl: project.porter?.url || "",
+    license: project.license || "", licenseEvidence: project.redistribution?.evidence || "",
+    redistributionNotes: project.redistribution?.notes || "", redistributionAllowed: true,
+    installPaths: (install.paths || []).join(", "), userDataPaths: (install.userDataPaths || []).join(", "),
+    architectures: (compatibility.architectures || []).join(", "),
+    firmwares: (compatibility.firmwares?.include || []).join(", "),
+    variantId: variant.id || "aarch64-portmaster", minimumRamMB: String(requirements.minimumRamMB || 128),
+    analogSticks: String(requirements.analogSticks || 0), renderers: (requirements.renderers || []).join(", "),
+    runtimes: (requirements.runtimes || []).join(", "), readyToRun: requirements.readyToRun !== false};
+}
+
+async function dashboardData() {
+  const records = seedManager.list();
+  const transfers = await seedManager.networkSnapshot().catch(() => []);
+  const metrics = await metricsStore.sample(transfers, seedManager.records);
+  return {ready: applicationReady, records, metrics,
+    published: records.filter((item) => item.publicationStatus === "published").length,
+    waiting: records.filter((item) => item.publicationStatus !== "published").length};
 }
 
 async function synchronizePublishedSeeds() {
@@ -85,6 +126,31 @@ function createWindow() {
   window.loadFile(path.join(__dirname, "renderer/index.html"));
 }
 
+ipcMain.handle("app:bootstrap", async () => ({ready: applicationReady, github: await githubIdentity()}));
+ipcMain.handle("dashboard:get", async () => {
+  try { return {ok: true, ...(await dashboardData())}; }
+  catch (error) { return {ok: false, error: error.message}; }
+});
+ipcMain.handle("ports:edit-data", async (_event, id) => {
+  try {
+    const record = seedManager.records.find((item) => item.id === id);
+    if (!record) throw new Error("Port não encontrado.");
+    let metadata = record.metadata ? {...record.metadata} : null;
+    const proposalRoot = resolveProposalPath(record);
+    if (!metadata) {
+      if (!proposalRoot) throw new Error("A proposta antiga não possui um caminho recuperável.");
+      metadata = metadataFromSubmission(JSON.parse(
+        await fs.readFile(path.join(proposalRoot, "submission.json"), "utf8")));
+      record.proposalPath = proposalRoot;
+      record.metadata = {...metadata, revision: String(Math.max(1, Number(metadata.revision || 2) - 1))};
+      await seedManager.save();
+    }
+    else metadata.revision = String(Number(metadata.revision || 1) + 1);
+    const inspected = await inspectPackage(record.packagePath);
+    return {ok: true, metadata, inspected};
+  } catch (error) { return {ok: false, error: error.message}; }
+});
+
 ipcMain.handle("package:choose", async () => {
   const selected = await dialog.showOpenDialog({title: "Selecione o ZIP do port",
     properties: ["openFile"], filters: [{name: "Pacote ZIP", extensions: ["zip"]}]});
@@ -95,13 +161,14 @@ ipcMain.handle("package:choose", async () => {
 
 ipcMain.handle("submission:validate", (_event, input, inspected) => createSubmission(input, inspected));
 
-ipcMain.handle("submission:export", async (_event, input, inspected) => {
+ipcMain.handle("submission:export", async (_event, input, inspected, editingId) => {
   const generated = createSubmission(input, inspected);
   if (generated.errors.length) return generated;
   const selected = await dialog.showOpenDialog({title: "Escolha onde exportar a proposta",
     properties: ["openDirectory", "createDirectory"]});
   if (selected.canceled || !selected.filePaths[0]) return {canceled: true, errors: []};
-  const folderName = `${input.id}-${input.version}`.replace(/[^A-Za-z0-9._-]/g, "-");
+  const revisionSuffix = editingId ? `-r${Number(input.revision || 1)}` : "";
+  const folderName = `${input.id}-${input.version}${revisionSuffix}`.replace(/[^A-Za-z0-9._-]/g, "-");
   const output = path.join(selected.filePaths[0], folderName);
   const packages = path.join(output, "packages");
   const torrents = path.join(output, "torrents");
@@ -110,8 +177,9 @@ ipcMain.handle("submission:export", async (_event, input, inspected) => {
   await fs.copyFile(inspected.filePath, packagePath);
   await fs.writeFile(path.join(output, "submission.json"),
     JSON.stringify(generated.submission, null, 2) + "\n", {encoding: "utf8", flag: "wx"});
+  if (editingId) await seedManager.stop(editingId);
   await seedManager.registerProposal({id: input.id, version: input.version,
-    sha256: inspected.sha256, packagePath, proposalPath: output});
+    sha256: inspected.sha256, packagePath, proposalPath: output, metadata: input, replaceId: editingId});
   const record = seedManager.records.find((item) => item.id === `${input.id}@${input.version}`);
   const torrent = await generateTorrent(packagePath,
     path.join(torrents, `${path.parse(inspected.fileName).name}.torrent`));
@@ -129,7 +197,7 @@ ipcMain.handle("community:set", async (_event, enabled) => {
   communityEnabled = Boolean(enabled);
   await fs.writeFile(path.join(app.getPath("userData"), "community.json"),
     JSON.stringify({enabled: communityEnabled}) + "\n");
-  const result = communityEnabled ? await synchronizePublishedSeeds() : null;
+  const result = communityEnabled ? await synchronizePublishedSeeds() : await seedManager.stopCommunity();
   return {ok: true, enabled: communityEnabled, result};
 });
 ipcMain.handle("seeds:list", () => seedManager.list());
@@ -158,11 +226,7 @@ ipcMain.handle("github:connect", async (_event, token) => {
     return {ok: true, login: user.login, persisted};
   } catch (error) { return {ok: false, error: error.message}; }
 });
-ipcMain.handle("github:status", async () => {
-  if (!githubToken) return {connected: false};
-  try { const user = await new GitHubPublisher(githubToken).identity(); return {connected: true, login: user.login}; }
-  catch { return {connected: false}; }
-});
+ipcMain.handle("github:status", githubIdentity);
 ipcMain.handle("github:publish", async (_event, id) => {
   try {
     const record = seedManager.records.find((item) => item.id === id);
@@ -189,13 +253,18 @@ ipcMain.handle("seeds:sync", async () => {
 
 app.whenReady().then(async () => {
   seedManager = new SeedManager(path.join(app.getPath("userData"), "seeding"));
-  await seedManager.load();
+  metricsStore = new MetricsStore(path.join(app.getPath("userData"), "metrics.json"));
+  await Promise.all([seedManager.load(), metricsStore.load()]);
   githubToken = await loadGitHubToken();
   try { communityEnabled = JSON.parse(await fs.readFile(path.join(app.getPath("userData"), "community.json"))).enabled === true; } catch {}
-  await prepareAllLocalSeeds();
   createWindow();
-  synchronizePublishedSeeds().catch(() => {});
+  (async () => {
+    try { await prepareAllLocalSeeds(); await synchronizePublishedSeeds(); }
+    catch (error) { console.error(error); }
+    finally { applicationReady = true; }
+  })();
   setInterval(() => synchronizePublishedSeeds().catch(() => {}), 5 * 60 * 1000).unref();
+  setInterval(() => dashboardData().catch(() => {}), 10 * 1000).unref();
   app.on("activate", () => { if (BrowserWindow.getAllWindows().length === 0) createWindow(); });
 });
 app.on("window-all-closed", async () => {

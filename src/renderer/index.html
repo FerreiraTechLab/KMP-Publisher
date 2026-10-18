@@ -1,66 +1,86 @@
 <!doctype html>
 <html lang="pt-BR">
 <head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>KMP Publisher</title>
-  <link rel="stylesheet" href="styles.css">
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>KMP Publisher</title><link rel="stylesheet" href="styles.css">
 </head>
 <body>
-  <header><div class="brand">KMP</div><div><h1>Publisher</h1><p>Prepare seu port para publicação</p></div><span class="version">v0.1</span></header>
-  <main>
-    <nav><button class="step active">1 <span>Pacote</span></button><button class="step">2 <span>Projeto</span></button><button class="step">3 <span>Compatibilidade</span></button><button class="step">4 <span>Revisão</span></button></nav>
-    <section class="intro"><h2>Proposta de publicação</h2><p>Selecione o ZIP e informe os dados do port. Hash, estrutura e contrato são verificados automaticamente.</p></section>
-    <form id="publisher-form">
-      <section class="card package-card">
-        <div><h3>Pacote do port</h3><p id="package-summary">Nenhum ZIP selecionado</p></div>
-        <button type="button" id="choose-package" class="secondary">Selecionar ZIP</button>
-        <div id="package-details" class="package-details hidden"></div>
+  <section id="loading-screen" class="gate-screen">
+    <div class="gate-panel loading-panel"><div class="brand large">KMP</div><h1>Preparando o Publisher</h1>
+      <p id="loading-message">Restaurando os ports e o nó de distribuição…</p>
+      <div class="loading-track"><span></span></div>
+      <ul><li>Verificando sua sessão do GitHub</li><li>Restaurando torrents e métricas locais</li><li>Sincronizando o catálogo assinado</li></ul>
+    </div>
+  </section>
+
+  <section id="login-screen" class="gate-screen hidden">
+    <div class="gate-panel login-panel"><div class="brand large">KMP</div><span class="eyebrow">KMP PUBLISHER</span>
+      <h1>Conecte sua conta GitHub</h1><p>O Publisher usa sua conta para enviar propostas e acompanhar revisões do catálogo.</p>
+      <label>Token de acesso do GitHub<input id="login-token" type="password" autocomplete="off" placeholder="github_pat_…"></label>
+      <button id="login-button" type="button" class="primary full">Entrar</button>
+      <p id="login-error" class="inline-error hidden"></p>
+      <small>A credencial é protegida pelo cofre do sistema quando ele está disponível.</small>
+    </div>
+  </section>
+
+  <div id="app-shell" class="hidden">
+    <header><div class="brand">KMP</div><div><h1>Publisher</h1><p id="account-label">Gerenciador de ports</p></div>
+      <button type="button" id="go-dashboard" class="header-button hidden">Dashboard</button><span class="version">v0.2</span></header>
+    <main>
+      <section id="dashboard-view">
+        <div class="dashboard-heading"><div><span class="eyebrow">VISÃO GERAL</span><h2>Seus ports</h2><p>Publicação e distribuição em um só lugar.</p></div>
+          <button type="button" id="add-port" class="add-button"><strong>+</strong><span>Adicionar port</span></button></div>
+        <section class="metrics-grid">
+          <article class="metric-card"><span>Ports publicados</span><strong id="metric-published">0</strong><small>disponíveis no catálogo</small></article>
+          <article class="metric-card"><span>Aguardando publicação</span><strong id="metric-waiting">0</strong><small>propostas e revisões</small></article>
+          <article class="metric-card"><span>Downloads equivalentes</span><strong id="metric-downloads">0,0</strong><small>calculados pelos bytes enviados</small></article>
+          <article class="metric-card"><span>Rede consumida</span><strong id="metric-network">0 B</strong><small>upload e download acumulados</small></article>
+        </section>
+        <section class="dashboard-toolbar card"><div><h3>Nó comunitário</h3><p>Este computador mantém cópias dos ports e participa da distribuição.</p></div>
+          <label class="switch-label"><input id="community-node" type="checkbox" checked><span class="switch"></span><b id="community-label">Ativo</b></label></section>
+        <section class="port-section"><div class="section-title"><div><h3>Publicados</h3><p>Clique em um port para abrir os detalhes da rede.</p></div><button id="refresh-dashboard" class="secondary">Atualizar</button></div>
+          <div id="published-grid" class="ports-grid"></div><div id="published-empty" class="empty-state hidden">Nenhum port publicado ainda.</div></section>
+        <section id="waiting-section" class="port-section"><div class="section-title"><div><h3>Aguardando publicação</h3><p>Propostas locais e revisões em andamento.</p></div></div>
+          <div id="waiting-grid" class="ports-grid"></div></section>
       </section>
-      <section class="card"><h3>Identificação</h3><div class="grid">
-        <label>ID do port<input name="id" placeholder="meu-port" required></label>
-        <label>Nome<input name="name" placeholder="Meu Port" required></label>
-        <label class="wide">Descrição<textarea name="description" rows="3" required></textarea></label>
-        <label>Versão<input name="version" placeholder="1.0.0" required></label>
-        <label>Revisão<input name="revision" type="number" min="1" value="1"></label>
-        <label>Canal<select name="channel"><option value="stable">Estável</option><option value="beta">Beta</option></select></label>
-        <label class="wide">Notas da versão<textarea name="releaseNotes" rows="2"></textarea></label>
-      </div></section>
-      <section class="card"><h3>Origem e licença</h3><div class="grid">
-        <label>Homepage<input name="homepage" type="url" placeholder="https://..."></label>
-        <label>Código fonte<input name="source" type="url" placeholder="https://..."></label>
-        <label>Nome do porter<input name="porterName" required></label>
-        <label>Perfil do porter<input name="porterUrl" type="url" placeholder="https://..."></label>
-        <label>Licença<input name="license" placeholder="MIT ou LicenseRef-..." required></label>
-        <label>Evidência da licença<input name="licenseEvidence" type="url" placeholder="https://..."></label>
-        <label class="wide">Observações de redistribuição<textarea name="redistributionNotes" rows="2"></textarea></label>
-        <label class="check wide"><input name="redistributionAllowed" type="checkbox"> Confirmo que este pacote pode ser redistribuído pelo KMP.</label>
-      </div></section>
-      <section class="card"><h3>Instalação e compatibilidade</h3><div class="grid">
-        <label class="wide">Caminhos instalados, separados por vírgula<input name="installPaths" placeholder="Meu Port.sh, meuport/"></label>
-        <label class="wide">Dados do usuário, separados por vírgula<input name="userDataPaths" placeholder="meuport/conf/"></label>
-        <label>Arquiteturas<input name="architectures" value="aarch64"></label>
-        <label>Firmwares<input name="firmwares" value="darkos, rocknix, aurknix"></label>
-        <label>Variante<input name="variantId" value="aarch64-portmaster"></label>
-        <label>RAM mínima (MiB)<input name="minimumRamMB" type="number" min="1" value="128"></label>
-        <label>Analógicos necessários<select name="analogSticks"><option>0</option><option>1</option><option>2</option></select></label>
-        <label>Renderizadores<input name="renderers" placeholder="gles2"></label>
-        <label>Runtimes<input name="runtimes" placeholder="love_11_5"></label>
-        <label class="check"><input name="readyToRun" type="checkbox" checked> Pronto para executar</label>
-      </div></section>
-      <section id="messages" class="messages hidden"></section>
-      <section class="card github-card"><div><h3>Publicação no GitHub</h3><p id="github-status">Conta não conectada</p></div><div id="github-login"><input id="github-token" type="password" autocomplete="off" placeholder="Token de acesso do GitHub"><button type="button" id="connect-github" class="secondary">Conectar</button></div></section>
-      <section class="card"><div class="seed-card"><div><h3>Nó de distribuição</h3><p>O Publisher gera o torrent e começa a semear assim que a proposta é exportada.</p><label class="check"><input id="community-node" type="checkbox"> Também manter cópias dos ports publicados (limite de 4 GiB).</label></div><div><span id="seed-status" class="seed-status">Nenhuma proposta registrada</span><button type="button" id="sync-seeds" class="secondary">Verificar publicação</button></div></div><div id="seed-list" class="seed-list"></div></section>
-      <footer><button type="button" id="validate" class="secondary">Validar proposta</button><button type="button" id="export" class="primary">Exportar proposta</button></footer>
-    </form>
-  </main>
-  <dialog id="seed-modal" class="seed-modal">
-    <div class="modal-heading"><div><span class="eyebrow">SEMEAÇÃO DO PORT</span><h2 id="seed-modal-title">Detalhes</h2></div><button type="button" id="close-seed-modal" class="icon-button" aria-label="Fechar">×</button></div>
-    <div id="seed-modal-status" class="modal-status"></div>
-    <div id="seed-modal-details" class="detail-grid"></div>
+
+      <section id="editor-view" class="hidden">
+        <button type="button" id="back-dashboard" class="back-button">← Voltar ao dashboard</button>
+        <section class="intro"><span class="eyebrow" id="editor-eyebrow">NOVO PORT</span><h2 id="editor-title">Adicionar port</h2><p>Selecione o ZIP e informe os dados. Hash, estrutura, torrent e contrato são gerados automaticamente.</p></section>
+        <form id="publisher-form">
+          <section class="card package-card"><div><h3>Pacote do port</h3><p id="package-summary">Nenhum ZIP selecionado</p></div>
+            <button type="button" id="choose-package" class="secondary">Selecionar ZIP</button><div id="package-details" class="package-details hidden"></div></section>
+          <section class="card"><h3>Identificação</h3><div class="grid">
+            <label>ID do port<input name="id" placeholder="meu-port" required></label><label>Nome<input name="name" required></label>
+            <label class="wide">Descrição<textarea name="description" rows="3" required></textarea></label>
+            <label>Versão<input name="version" placeholder="1.0.0" required></label><label>Revisão<input name="revision" type="number" min="1" value="1"></label>
+            <label>Canal<select name="channel"><option value="stable">Estável</option><option value="beta">Beta</option></select></label>
+            <label class="wide">Notas da versão<textarea name="releaseNotes" rows="2"></textarea></label>
+          </div></section>
+          <section class="card"><h3>Origem e licença</h3><div class="grid">
+            <label>Homepage<input name="homepage" type="url" placeholder="https://..."></label><label>Código fonte<input name="source" type="url" placeholder="https://..."></label>
+            <label>Nome do porter<input name="porterName" required></label><label>Perfil do porter<input name="porterUrl" type="url" placeholder="https://..."></label>
+            <label>Licença<input name="license" required></label><label>Evidência da licença<input name="licenseEvidence" type="url" placeholder="https://..."></label>
+            <label class="wide">Observações de redistribuição<textarea name="redistributionNotes" rows="2"></textarea></label>
+            <label class="check wide"><input name="redistributionAllowed" type="checkbox"> Confirmo que este pacote pode ser redistribuído pelo KMP.</label>
+          </div></section>
+          <section class="card"><h3>Instalação e compatibilidade</h3><div class="grid">
+            <label class="wide">Caminhos instalados, separados por vírgula<input name="installPaths"></label><label class="wide">Dados do usuário, separados por vírgula<input name="userDataPaths"></label>
+            <label>Arquiteturas<input name="architectures" value="aarch64"></label><label>Firmwares<input name="firmwares" value="darkos, rocknix, aurknix"></label>
+            <label>Variante<input name="variantId" value="aarch64-portmaster"></label><label>RAM mínima (MiB)<input name="minimumRamMB" type="number" min="1" value="128"></label>
+            <label>Analógicos necessários<select name="analogSticks"><option>0</option><option>1</option><option>2</option></select></label><label>Renderizadores<input name="renderers" placeholder="gles2"></label>
+            <label>Runtimes<input name="runtimes" placeholder="love_11_5"></label><label class="check"><input name="readyToRun" type="checkbox" checked> Pronto para executar</label>
+          </div></section>
+          <section id="messages" class="messages hidden"></section><footer><button type="button" id="validate" class="secondary">Validar proposta</button><button type="button" id="export" class="primary">Exportar proposta</button></footer>
+        </form>
+      </section>
+    </main>
+  </div>
+
+  <dialog id="seed-modal" class="seed-modal"><div class="modal-heading"><div><span class="eyebrow">DISTRIBUIÇÃO DO PORT</span><h2 id="seed-modal-title">Detalhes</h2></div><button type="button" id="close-seed-modal" class="icon-button">×</button></div>
+    <div id="seed-modal-status" class="modal-status"></div><div id="seed-modal-details" class="detail-grid"></div>
     <div class="path-details"><div><strong>Pacote</strong><code id="seed-package-path"></code></div><div><strong>Torrent</strong><code id="seed-torrent-path"></code></div><div><strong>Infohash</strong><code id="seed-info-hash"></code></div></div>
-    <div class="modal-actions"><button type="button" id="export-seed-torrent" class="secondary">Exportar .torrent</button><button type="button" id="toggle-seed" class="primary"></button></div>
+    <div class="modal-actions"><button type="button" id="review-port" class="secondary">Enviar para revisão</button><button type="button" id="export-seed-torrent" class="secondary">Exportar .torrent</button><button type="button" id="update-port" class="secondary">Atualizar port</button><button type="button" id="toggle-seed" class="primary"></button></div>
   </dialog>
   <script src="renderer.js"></script>
-</body>
-</html>
+</body></html>

@@ -1,218 +1,37 @@
-let inspected = null;
-let selectedSeedId = null;
+let inspected = null, editingId = null, selectedSeedId = null, selectedSeed = null;
 let seedDetailsRefreshing = false;
 const form = document.querySelector("#publisher-form");
 const messages = document.querySelector("#messages");
 const seedModal = document.querySelector("#seed-modal");
-const STATUS_LABELS = {"awaiting-publication": "aguardando publicação", ready: "pronto",
-  checking: "verificando", seeding: "semeando", stopped: "parado", error: "erro"};
+const STATUS_LABELS = {"awaiting-publication":"aguardando publicação",ready:"pronto",checking:"verificando",seeding:"semeando",stopped:"parado",error:"erro"};
+const defaults = {revision:"1",channel:"stable",architectures:"aarch64",firmwares:"darkos, rocknix, aurknix",variantId:"aarch64-portmaster",minimumRamMB:"128",analogSticks:"0",readyToRun:true};
 
-function formatBytes(value, suffix = "") {
-  const number = Number(value);
-  if (!Number.isFinite(number)) return "indisponível";
-  const units = ["B", "KiB", "MiB", "GiB", "TiB"];
-  let amount = number; let unit = 0;
-  while (amount >= 1024 && unit < units.length - 1) { amount /= 1024; unit += 1; }
-  return `${amount.toFixed(unit ? 1 : 0)} ${units[unit]}${suffix}`;
-}
+function formatBytes(value,suffix=""){const n=Number(value);if(!Number.isFinite(n))return"indisponível";const u=["B","KiB","MiB","GiB","TiB"];let a=n,i=0;while(a>=1024&&i<u.length-1){a/=1024;i++}return`${a.toFixed(i?1:0)} ${u[i]}${suffix}`}
+function showMessage(kind,value){messages.className=`messages ${kind}`;messages.textContent=Array.isArray(value)?value.join("\n"):value}
+function showScreen(id){for(const value of ["loading-screen","login-screen","app-shell"])document.querySelector(`#${value}`).classList.toggle("hidden",value!==id)}
+function showView(name){document.querySelector("#dashboard-view").classList.toggle("hidden",name!=="dashboard");document.querySelector("#editor-view").classList.toggle("hidden",name!=="editor");document.querySelector("#go-dashboard").classList.toggle("hidden",name!=="editor");window.scrollTo(0,0)}
+function detailItem(label,value){const item=document.createElement("div");item.className="detail-item";const strong=document.createElement("strong");strong.textContent=label;const span=document.createElement("span");span.textContent=value;item.append(strong,span);return item}
+function formValue(){const values=Object.fromEntries(new FormData(form).entries());values.redistributionAllowed=form.elements.redistributionAllowed.checked;values.readyToRun=form.elements.readyToRun.checked;return values}
+function fillForm(values={}){form.reset();for(const [name,fallback]of Object.entries(defaults)){const field=form.elements[name];if(field){if(field.type==="checkbox")field.checked=Boolean(fallback);else field.value=fallback}}for(const [name,value]of Object.entries(values)){const field=form.elements[name];if(!field)continue;if(field.type==="checkbox")field.checked=Boolean(value);else field.value=value??""}}
+function showPackage(value){inspected=value;document.querySelector("#package-summary").textContent=`${value.fileName} · ${(value.sizeBytes/1048576).toFixed(1)} MiB`;const details=document.querySelector("#package-details");details.classList.remove("hidden");details.innerHTML=`<div class="metric"><strong>SHA-256</strong>${value.sha256.slice(0,20)}…</div><div class="metric"><strong>Estrutura</strong>${value.entryCount} arquivos · ${value.roots.length} raízes</div><div class="metric"><strong>Launchers</strong>${value.launchers.length||"nenhum"}</div>`}
+function openNewPort(){editingId=null;inspected=null;fillForm();document.querySelector("#editor-eyebrow").textContent="NOVO PORT";document.querySelector("#editor-title").textContent="Adicionar port";document.querySelector("#package-summary").textContent="Nenhum ZIP selecionado";document.querySelector("#package-details").classList.add("hidden");messages.className="messages hidden";showView("editor")}
+async function openEditor(id){const result=await window.publisher.editPort(id);if(!result.ok)return alert(result.error);editingId=id;fillForm(result.metadata);showPackage(result.inspected);document.querySelector("#editor-eyebrow").textContent="ATUALIZAÇÃO";document.querySelector("#editor-title").textContent=`Atualizar ${result.metadata.name}`;messages.className="messages hidden";seedModal.close();showView("editor")}
 
-function detailItem(label, value) {
-  const item = document.createElement("div"); item.className = "detail-item";
-  const title = document.createElement("strong"); title.textContent = label;
-  const content = document.createElement("span"); content.textContent = value;
-  item.append(title, content); return item;
-}
+async function showSeedDetails(id,open=true){if(seedDetailsRefreshing)return;seedDetailsRefreshing=true;let result;try{result=await window.publisher.seedDetails(id)}finally{seedDetailsRefreshing=false}if(!result.ok)return alert(result.error);const seed=result.seed;selectedSeedId=id;selectedSeed=seed;document.querySelector("#seed-modal-title").textContent=`${seed.metadata?.name||seed.portId} ${seed.version}`;const state=seed.running?"Semeando agora":(STATUS_LABELS[seed.status]||seed.status);document.querySelector("#seed-modal-status").textContent=seed.status==="error"&&seed.error?`Erro: ${seed.error}`:`${state} · ${seed.publicationStatus==="published"?"publicado no catálogo":"aguardando publicação"}`;const transfer=seed.transfer||{},mapping=seed.portMapping||{};const elapsed=seed.startedAt?Math.max(0,Date.now()-Date.parse(seed.startedAt)):null;const details=[["Enviado",formatBytes(transfer.uploadLength)],["Velocidade",formatBytes(transfer.uploadSpeed,"/s")],["Conexões",transfer.connections??"indisponível"],["Peers externos",transfer.remotePeers??"indisponível"],["Hole punch",transfer.holePunchPeers??"indisponível"],["Peers descobertos",transfer.network?.torrent?.knownPeers??"indisponível"],["Origem dos peers",transfer.network?.torrent?.peerSources?Object.entries(transfer.network.torrent.peerSources).map(([s,c])=>`${s}: ${c}`).join(", "):"indisponível"],["Conexões por punch",transfer.network?.successfulAfterHolepunchConnect??"indisponível"],["Tempo ativo",elapsed===null?"—":`${Math.floor(elapsed/3600000)}h ${Math.floor(elapsed%3600000/60000)}min`],["Limite de upload",seed.uploadLimit||"sem limite"],["Processo",seed.pid?`PID ${seed.pid}`:"inativo"],["Porta BitTorrent",seed.listenPort?`${seed.listenPort} TCP/UDP`:"indisponível"],["Abertura no roteador",mapping.active?`${String(mapping.method).toUpperCase()} ativo`:"indisponível"],["Endereço externo",mapping.externalAddress||"não detectado"],["Acessibilidade",mapping.addressScope==="cgnat"?"CGNAT: entrada bloqueada":mapping.internetReachable?"provável pela internet":mapping.active?"mapeada; teste pendente":seed.backendKind==="kmp-torrentd"?"sem entrada direta; BEP 55 disponível":"somente saída/rede local"],["Tamanho do pacote",formatBytes(seed.packageSizeBytes)],["Backend",seed.backendAvailable?(seed.backendKind==="kmp-torrentd"?"KMP Torrent":"aria2 disponível"):"indisponível"],["Estado",transfer.status||(seed.running?"iniciando":"parado")]];document.querySelector("#seed-modal-details").replaceChildren(...details.map(([l,v])=>detailItem(l,String(v))));document.querySelector("#seed-package-path").textContent=seed.packagePath||"—";document.querySelector("#seed-torrent-path").textContent=seed.torrentPath||"—";document.querySelector("#seed-info-hash").textContent=seed.infoHash||"—";const toggle=document.querySelector("#toggle-seed");toggle.textContent=seed.running?"Parar semeação":"Retomar semeação";toggle.dataset.running=seed.running?"true":"false";document.querySelector("#review-port").textContent=seed.pullRequest?.pullUrl?`Abrir revisão #${seed.pullRequest.pullNumber}`:"Enviar para revisão";if(open&&!seedModal.open)seedModal.showModal()}
 
-async function showSeedDetails(id, open = true) {
-  if (seedDetailsRefreshing) return;
-  seedDetailsRefreshing = true;
-  let result;
-  try { result = await window.publisher.seedDetails(id); }
-  finally { seedDetailsRefreshing = false; }
-  if (!result.ok) return showMessage("error", result.error);
-  const seed = result.seed; selectedSeedId = id;
-  document.querySelector("#seed-modal-title").textContent = `${seed.portId} ${seed.version}`;
-  const state = seed.running ? "Semeando agora" : (STATUS_LABELS[seed.status] || seed.status);
-  document.querySelector("#seed-modal-status").textContent = seed.status === "error" && seed.error ?
-    `Erro: ${seed.error}` :
-    `${state} · ${seed.publicationStatus === "published" ? "publicado no catálogo" : "aguardando publicação"}`;
-  const transfer = seed.transfer || {};
-  const mapping = seed.portMapping || {};
-  const elapsed = seed.startedAt ? Math.max(0, Date.now() - Date.parse(seed.startedAt)) : null;
-  const details = [
-    ["Enviado", formatBytes(transfer.uploadLength)],
-    ["Velocidade", formatBytes(transfer.uploadSpeed, "/s")],
-    ["Conexões", transfer.connections ?? "indisponível"],
-    ["Peers externos", transfer.remotePeers ?? "indisponível"],
-    ["Hole punch", transfer.holePunchPeers ?? "indisponível"],
-    ["Peers descobertos", transfer.network?.torrent?.knownPeers ?? "indisponível"],
-    ["Origem dos peers", transfer.network?.torrent?.peerSources ?
-      Object.entries(transfer.network.torrent.peerSources).map(([source, count]) => `${source}: ${count}`).join(", ") :
-      "indisponível"],
-    ["Conexões por punch", transfer.network?.successfulAfterHolepunchConnect ?? "indisponível"],
-    ["Tempo ativo", elapsed === null ? "—" : `${Math.floor(elapsed / 3600000)}h ${Math.floor(elapsed % 3600000 / 60000)}min`],
-    ["Limite de upload", seed.uploadLimit || "sem limite"],
-    ["Processo", seed.pid ? `PID ${seed.pid}` : "inativo"],
-    ["Porta BitTorrent", seed.listenPort ? `${seed.listenPort} TCP/UDP` : "indisponível"],
-    ["Abertura no roteador", mapping.active ? `${String(mapping.method).toUpperCase()} ativo` : "indisponível"],
-    ["Endereço externo", mapping.externalAddress || "não detectado"],
-    ["Acessibilidade", mapping.addressScope === "cgnat" ? "CGNAT: conexão direta bloqueada" :
-      mapping.internetReachable ? "provável pela internet" : mapping.active ?
-        "mapeada; teste externo pendente" : seed.backendKind === "kmp-torrentd" ?
-          "sem entrada direta; BEP 55 disponível" : "somente saída/rede local"],
-    ["Tamanho do pacote", formatBytes(seed.packageSizeBytes)],
-    ["Backend", seed.backendAvailable ?
-      (seed.backendKind === "kmp-torrentd" ? "KMP Torrent (BitTorrent padrão)" : "aria2 disponível") :
-      "indisponível"],
-    ["Estado do torrent", transfer.status || (seed.running ? "iniciando" : "parado")]
-  ];
-  document.querySelector("#seed-modal-details").replaceChildren(...details.map(([label, value]) => detailItem(label, String(value))));
-  document.querySelector("#seed-package-path").textContent = seed.packagePath || "—";
-  document.querySelector("#seed-torrent-path").textContent = seed.torrentPath || "—";
-  document.querySelector("#seed-info-hash").textContent = seed.infoHash || "—";
-  const toggle = document.querySelector("#toggle-seed");
-  toggle.textContent = seed.running ? "Parar semeação" : "Retomar semeação";
-  toggle.dataset.running = seed.running ? "true" : "false";
-  document.querySelector("#export-seed-torrent").disabled = !seed.torrentPath;
-  if (open && !seedModal.open) seedModal.showModal();
-}
+function portCard(seed,waiting=false){const button=document.createElement("button");button.type="button";button.className=`port-card${waiting?" waiting-card":""}`;const name=seed.metadata?.name||seed.portId;const description=seed.metadata?.description||`Versão ${seed.version}`;button.innerHTML=`<h4></h4><p></p><footer><span class="status-dot"></span><span></span></footer>`;button.querySelector("h4").textContent=name;button.querySelector("p").textContent=description;button.querySelector(".status-dot").textContent=waiting?"● Aguardando":"● Publicado";button.querySelector("footer span:last-child").textContent=`v${seed.version}`;button.onclick=()=>showSeedDetails(seed.id);return button}
+async function refreshDashboard(){const result=await window.publisher.dashboard();if(!result.ok)return;document.querySelector("#metric-published").textContent=result.published;document.querySelector("#metric-waiting").textContent=result.waiting;document.querySelector("#metric-downloads").textContent=Number(result.metrics.equivalentDownloads||0).toLocaleString("pt-BR",{minimumFractionDigits:1,maximumFractionDigits:1});document.querySelector("#metric-network").textContent=formatBytes(result.metrics.totalNetworkBytes||0);const published=result.records.filter(x=>x.publicationStatus==="published"),waiting=result.records.filter(x=>x.publicationStatus!=="published");document.querySelector("#published-grid").replaceChildren(...published.map(x=>portCard(x)));document.querySelector("#waiting-grid").replaceChildren(...waiting.map(x=>portCard(x,true)));document.querySelector("#published-empty").classList.toggle("hidden",published.length>0);document.querySelector("#waiting-section").classList.toggle("hidden",waiting.length===0)}
 
-async function refreshSeeds() {
-  const seeds = await window.publisher.listSeeds();
-  const active = seeds.filter((seed) => seed.running).length;
-  const waiting = seeds.filter((seed) => seed.publicationStatus !== "published").length;
-  document.querySelector("#seed-status").textContent = active ? `${active} semeando` :
-    waiting ? `${waiting} aguardando publicação` : seeds.length ? `${seeds.length} parado(s)` :
-    "Nenhuma proposta registrada";
-  const list = document.querySelector("#seed-list");
-  list.replaceChildren(...seeds.map((seed) => {
-    const row = document.createElement("div"); row.className = "seed-row";
-    const publication = seed.publicationStatus === "published" ? "publicado" : "aguardando publicação";
-    const distribution = seed.running ? "semeando" : (STATUS_LABELS[seed.status] || seed.status);
-    const label = document.createElement("span"); label.textContent = `${seed.portId} ${seed.version} · ${distribution} · ${publication}`;
-    const actions = document.createElement("div"); actions.className = "seed-actions";
-    const publish = document.createElement("button"); publish.type = "button"; publish.className = "primary";
-    if (seed.pullRequest?.pullUrl) {
-      publish.textContent = `Abrir revisão #${seed.pullRequest.pullNumber}`;
-      publish.onclick = () => window.publisher.openExternal(seed.pullRequest.pullUrl);
-    } else {
-      publish.textContent = "Enviar para revisão";
-      publish.onclick = async () => {
-        publish.disabled = true; publish.textContent = "Enviando…";
-        const result = await window.publisher.publishProposal(seed.id);
-        if (!result.ok) showMessage("error", result.error);
-        else showMessage("success", `Proposta enviada para revisão:\n${result.pullUrl}`);
-        await refreshSeeds();
-      };
-    }
-    const action = document.createElement("button"); action.type = "button"; action.className = "secondary";
-    action.textContent = "Detalhes"; action.onclick = () => showSeedDetails(seed.id);
-    actions.append(publish, action); row.append(label, actions); return row;
-  }));
-}
+async function enterDashboard(login){document.querySelector("#account-label").textContent=`Conectado como @${login}`;showScreen("app-shell");showView("dashboard");const status=await window.publisher.communityStatus();document.querySelector("#community-node").checked=status.enabled;document.querySelector("#community-label").textContent=status.enabled?"Ativo":"Inativo";await refreshDashboard()}
+async function bootstrap(){showScreen("loading-screen");let state;do{state=await window.publisher.bootstrap();if(!state.ready){await new Promise(r=>setTimeout(r,500))}}while(!state.ready);if(state.github.connected)await enterDashboard(state.github.login);else showScreen("login-screen")}
 
-async function refreshGitHub() {
-  const status = await window.publisher.githubStatus();
-  document.querySelector("#github-status").textContent = status.connected ?
-    `Conectado como @${status.login}. Agora envie uma proposta para revisão.` : "Conta não conectada";
-  document.querySelector("#github-login").classList.toggle("hidden", status.connected);
-}
-
-function formValue() {
-  const values = Object.fromEntries(new FormData(form).entries());
-  values.redistributionAllowed = form.elements.redistributionAllowed.checked;
-  values.readyToRun = form.elements.readyToRun.checked;
-  return values;
-}
-
-function showMessage(kind, lines) {
-  messages.className = `messages ${kind}`;
-  messages.textContent = Array.isArray(lines) ? lines.join("\n") : lines;
-}
-
-document.querySelector("#choose-package").addEventListener("click", async () => {
-  const result = await window.publisher.choosePackage();
-  if (!result) return;
-  if (!result.ok) return showMessage("error", result.error);
-  inspected = result.package;
-  document.querySelector("#package-summary").textContent = `${inspected.fileName} · ${(inspected.sizeBytes / 1048576).toFixed(1)} MiB`;
-  const details = document.querySelector("#package-details");
-  details.classList.remove("hidden");
-  details.innerHTML = `<div class="metric"><strong>SHA-256</strong>${inspected.sha256.slice(0, 20)}…</div><div class="metric"><strong>Estrutura</strong>${inspected.entryCount} arquivos · ${inspected.roots.length} raízes</div><div class="metric"><strong>Launchers</strong>${inspected.launchers.length || "nenhum"}</div>`;
-  if (!form.elements.installPaths.value) form.elements.installPaths.value = inspected.roots.map((root) => inspected.entries.includes(`${root}/`) ? `${root}/` : root).join(", ");
-  if (inspected.warnings.length) showMessage("warning", inspected.warnings);
-  else messages.className = "messages hidden";
-});
-
-document.querySelector("#validate").addEventListener("click", async () => {
-  const result = await window.publisher.validate(formValue(), inspected);
-  if (result.errors.length) showMessage("error", result.errors.map((item) => `• ${item}`));
-  else showMessage("success", ["Proposta válida.", "O pacote e os metadados estão prontos para exportação."]);
-});
-
-document.querySelector("#export").addEventListener("click", async () => {
-  const result = await window.publisher.exportProposal(formValue(), inspected);
-  if (result.canceled) return;
-  if (result.errors.length) showMessage("error", result.errors.map((item) => `• ${item}`));
-  else {
-    const seed = result.seedStarted ? "Seed iniciado." : `Torrent gerado; seed pendente: ${result.seedWarning}`;
-    showMessage(result.seedStarted ? "success" : "warning",
-      `Proposta exportada. ${seed}\nInfohash: ${result.infoHash}\n${result.output}`);
-    await refreshSeeds();
-  }
-});
-
-refreshSeeds();
-refreshGitHub();
-setInterval(refreshSeeds, 10000);
-setInterval(() => {
-  if (seedModal.open && selectedSeedId) showSeedDetails(selectedSeedId, false);
-}, 1000);
-document.querySelector("#connect-github").addEventListener("click", async () => {
-  const input = document.querySelector("#github-token");
-  const result = await window.publisher.connectGitHub(input.value);
-  input.value = "";
-  if (!result.ok) showMessage("error", result.error);
-  else {
-    const persistence = result.persisted ? "A credencial foi armazenada pelo cofre do sistema." :
-      "O cofre do sistema não está disponível; a credencial será esquecida ao fechar o aplicativo.";
-    showMessage(result.persisted ? "success" : "warning", `GitHub conectado como @${result.login}. ${persistence}`);
-    await refreshGitHub();
-  }
-});
-document.querySelector("#sync-seeds").addEventListener("click", async () => {
-  const result = await window.publisher.syncSeeds();
-  if (!result.ok) showMessage("error", result.error);
-  else showMessage(result.activated ? "success" : "warning",
-    result.activated ? `${result.activated} publicação(ões) confirmada(s).` :
-      `Catálogo ${result.sequence} verificado. A proposta continua aguardando publicação; o seed local permanece ativo.`);
-  await refreshSeeds();
-});
-document.querySelector("#close-seed-modal").addEventListener("click", () => seedModal.close());
-document.querySelector("#toggle-seed").addEventListener("click", async (event) => {
-  if (!selectedSeedId) return;
-  event.currentTarget.disabled = true;
-  const result = event.currentTarget.dataset.running === "true" ?
-    await window.publisher.stopSeed(selectedSeedId) : await window.publisher.startSeed(selectedSeedId);
-  if (!result.ok) showMessage("error", result.error);
-  await refreshSeeds(); await showSeedDetails(selectedSeedId, false);
-  event.currentTarget.disabled = false;
-});
-document.querySelector("#export-seed-torrent").addEventListener("click", async () => {
-  if (!selectedSeedId) return;
-  const result = await window.publisher.exportTorrent(selectedSeedId);
-  if (result.canceled) return;
-  if (!result.ok) showMessage("error", result.error);
-  else showMessage("success", `Torrent exportado para:\n${result.filePath}`);
-});
-
-window.publisher.communityStatus().then((status) => { document.querySelector("#community-node").checked = status.enabled; });
-document.querySelector("#community-node").addEventListener("change", async (event) => {
-  event.currentTarget.disabled = true;
-  try {
-    const result = await window.publisher.setCommunity(event.currentTarget.checked);
-    const managed = result.result?.community?.managed || 0;
-    showMessage("success", result.enabled ? `Nó comunitário ativado: ${managed} torrent(s) gerenciado(s).` : "Nó comunitário desativado.");
-  } catch (error) { event.currentTarget.checked = !event.currentTarget.checked; showMessage("error", error.message); }
-  event.currentTarget.disabled = false;
-});
+document.querySelector("#login-button").onclick=async()=>{const button=document.querySelector("#login-button"),error=document.querySelector("#login-error");button.disabled=true;button.textContent="Conectando…";const token=document.querySelector("#login-token").value;const result=await window.publisher.connectGitHub(token);button.disabled=false;button.textContent="Entrar";if(!result.ok){error.textContent=result.error;error.classList.remove("hidden");return}error.classList.add("hidden");document.querySelector("#login-token").value="";await enterDashboard(result.login)};
+document.querySelector("#add-port").onclick=openNewPort;document.querySelector("#back-dashboard").onclick=()=>{showView("dashboard");refreshDashboard()};document.querySelector("#go-dashboard").onclick=()=>{showView("dashboard");refreshDashboard()};document.querySelector("#refresh-dashboard").onclick=refreshDashboard;
+document.querySelector("#choose-package").onclick=async()=>{const result=await window.publisher.choosePackage();if(!result)return;if(!result.ok)return showMessage("error",result.error);showPackage(result.package);if(!form.elements.installPaths.value)form.elements.installPaths.value=inspected.roots.map(root=>inspected.entries.includes(`${root}/`)?`${root}/`:root).join(", ");if(inspected.warnings.length)showMessage("warning",inspected.warnings);else messages.className="messages hidden"};
+document.querySelector("#validate").onclick=async()=>{const result=await window.publisher.validate(formValue(),inspected);if(result.errors.length)showMessage("error",result.errors.map(x=>`• ${x}`));else showMessage("success","Proposta válida. O pacote e os metadados estão prontos.")};
+document.querySelector("#export").onclick=async()=>{const button=document.querySelector("#export");button.disabled=true;button.textContent="Exportando…";const result=await window.publisher.exportProposal(formValue(),inspected,editingId);button.disabled=false;button.textContent="Exportar proposta";if(result.canceled)return;if(result.errors?.length)return showMessage("error",result.errors.map(x=>`• ${x}`));showMessage(result.seedStarted?"success":"warning",`Proposta exportada. ${result.seedStarted?"Seed iniciado.":result.seedWarning}`);editingId=null;setTimeout(()=>{showView("dashboard");refreshDashboard()},700)};
+document.querySelector("#close-seed-modal").onclick=()=>seedModal.close();document.querySelector("#update-port").onclick=()=>openEditor(selectedSeedId);document.querySelector("#review-port").onclick=async()=>{if(selectedSeed?.pullRequest?.pullUrl)return window.publisher.openExternal(selectedSeed.pullRequest.pullUrl);const result=await window.publisher.publishProposal(selectedSeedId);if(!result.ok)return alert(result.error);await showSeedDetails(selectedSeedId,false)};
+document.querySelector("#toggle-seed").onclick=async event=>{event.currentTarget.disabled=true;const result=event.currentTarget.dataset.running==="true"?await window.publisher.stopSeed(selectedSeedId):await window.publisher.startSeed(selectedSeedId);if(!result.ok)alert(result.error);await showSeedDetails(selectedSeedId,false);event.currentTarget.disabled=false};document.querySelector("#export-seed-torrent").onclick=async()=>{const result=await window.publisher.exportTorrent(selectedSeedId);if(!result.ok&&!result.canceled)alert(result.error)};
+document.querySelector("#community-node").onchange=async event=>{event.currentTarget.disabled=true;try{const result=await window.publisher.setCommunity(event.currentTarget.checked);document.querySelector("#community-label").textContent=result.enabled?"Ativo":"Inativo"}catch(error){event.currentTarget.checked=!event.currentTarget.checked;alert(error.message)}event.currentTarget.disabled=false};
+setInterval(()=>{if(!document.querySelector("#app-shell").classList.contains("hidden")){refreshDashboard();if(seedModal.open&&selectedSeedId)showSeedDetails(selectedSeedId,false)}},10000);
+bootstrap();

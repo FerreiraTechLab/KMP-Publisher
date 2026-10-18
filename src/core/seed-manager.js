@@ -98,6 +98,8 @@ class SeedManager {
   constructor(stateDirectory, options = {}) {
     this.stateDirectory = stateDirectory;
     this.stateFile = path.join(stateDirectory, "seeds.json");
+    this.communityFile = path.join(stateDirectory, "community.json");
+    this.communityHashes = new Set();
     this.torrentd = options.torrentd === undefined ?
       (options.aria2 === undefined ? (bundledTorrentd() || findExecutable("kmp-torrentd")) : null) :
       options.torrentd;
@@ -122,6 +124,10 @@ class SeedManager {
     await fsp.mkdir(this.stateDirectory, {recursive: true});
     try { const parsed = JSON.parse(await fsp.readFile(this.stateFile, "utf8")); this.records = Array.isArray(parsed.records) ? parsed.records : []; }
     catch (error) { if (error.code !== "ENOENT") throw error; }
+    try {
+      const community = JSON.parse(await fsp.readFile(this.communityFile, "utf8"));
+      this.communityHashes = new Set(Array.isArray(community.infoHashes) ? community.infoHashes : []);
+    } catch (error) { if (error.code !== "ENOENT") throw error; }
     return this.list();
   }
   async save() {
@@ -205,6 +211,20 @@ class SeedManager {
     }
     return null;
   }
+  async networkSnapshot() {
+    if (!this.daemon) return [];
+    const keys = ["gid", "status", "infoHash", "totalLength", "completedLength",
+      "uploadLength", "downloadLength", "downloadSpeed", "uploadSpeed", "connections"];
+    const byHash = new Map();
+    for (const [method, params] of [["aria2.tellActive", [keys]],
+      ["aria2.tellWaiting", [0, 1000, keys]], ["aria2.tellStopped", [0, 1000, keys]]]) {
+      for (const item of await this.rpc(method, params) || []) {
+        const hash = String(item.infoHash || "").toLowerCase();
+        if (hash) byHash.set(hash, item);
+      }
+    }
+    return [...byHash.values()];
+  }
   async details(id) {
     const record = this.records.find((item) => item.id === id);
     if (!record) throw new Error("Seed não encontrado.");
@@ -233,10 +253,11 @@ class SeedManager {
       pid: this.daemon?.child.pid || null, startedAt: runtime?.startedAt || null,
       listenPort: this.listenPort, portMapping: this.portMapper.details(), packageSizeBytes, transfer};
   }
-  async registerProposal({id, version, sha256, packagePath, proposalPath}) {
+  async registerProposal({id, version, sha256, packagePath, proposalPath, metadata, replaceId}) {
     const key = `${id}@${version}`;
-    const existing = this.records.find((record) => record.id === key);
+    const existing = this.records.find((record) => record.id === (replaceId || key));
     const value = {id: key, portId: id, version, sha256, packagePath,
+      metadata: metadata || existing?.metadata || null,
       proposalPath: proposalPath || existing?.proposalPath || path.dirname(path.dirname(packagePath)),
       torrentPath: existing?.torrentPath || null, status: existing?.torrentPath ? "ready" : "awaiting-publication",
       publicationStatus: existing?.publicationStatus || "awaiting-publication",
@@ -301,8 +322,30 @@ class SeedManager {
         "continue": "true", "check-integrity": "true", "seed-ratio": "0",
         "auto-file-renaming": "false"}]);
       added += 1;
+      this.communityHashes.add(String(download.infoHash).toLowerCase());
     }
+    await fsp.writeFile(this.communityFile, JSON.stringify({
+      infoHashes: [...this.communityHashes].sort()
+    }, null, 2) + "\n");
     return {managed, added, reservedBytes, limitBytes};
+  }
+  async stopCommunity() {
+    if (!this.communityHashes.size) return {removed: 0};
+    await this.ensureDaemon();
+    let removed = 0;
+    for (const [method, params] of [["aria2.tellActive", [["gid", "infoHash"]]],
+      ["aria2.tellWaiting", [0, 1000, ["gid", "infoHash"]]],
+      ["aria2.tellStopped", [0, 1000, ["gid", "infoHash"]]]]) {
+      for (const item of await this.rpc(method, params) || []) {
+        if (!this.communityHashes.has(String(item.infoHash || "").toLowerCase())) continue;
+        try { await this.rpc("aria2.forceRemove", [item.gid]); }
+        catch { try { await this.rpc("aria2.removeDownloadResult", [item.gid]); } catch {} }
+        removed += 1;
+      }
+    }
+    this.communityHashes.clear();
+    await fsp.writeFile(this.communityFile, JSON.stringify({infoHashes: []}, null, 2) + "\n");
+    return {removed};
   }
   async stop(id) {
     const runtime = this.processes.get(id);

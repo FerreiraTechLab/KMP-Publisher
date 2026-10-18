@@ -49,3 +49,18 @@ test("reports seed details while it is stopped", async (context) => {
   assert.equal(details.pid, null);
   assert.equal(details.transfer, null);
 });
+
+test("replaces a port record while preparing an update", async (context) => {
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), "kmp-publisher-update-"));
+  context.after(() => fs.rm(directory, {recursive: true, force: true}));
+  const manager = new SeedManager(directory, {aria2: "/fake/aria2c"});
+  await manager.load();
+  await manager.registerProposal({id: "example", version: "1.0", sha256: "a".repeat(64),
+    packagePath: "/packages/v1.zip", metadata: {name: "Example", revision: "1"}});
+  await manager.registerProposal({id: "example", version: "2.0", sha256: "b".repeat(64),
+    packagePath: "/packages/v2.zip", metadata: {name: "Example", revision: "1"},
+    replaceId: "example@1.0"});
+  assert.equal(manager.list().length, 1);
+  assert.equal(manager.list()[0].id, "example@2.0");
+  assert.equal(manager.list()[0].metadata.name, "Example");
+});
