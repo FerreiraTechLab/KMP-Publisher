@@ -64,3 +64,22 @@ test("replaces a port record while preparing an update", async (context) => {
   assert.equal(manager.list()[0].id, "example@2.0");
   assert.equal(manager.list()[0].metadata.name, "Example");
 });
+
+test("limits how many community ports are added", async (context) => {
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), "kmp-publisher-community-"));
+  context.after(() => fs.rm(directory, {recursive: true, force: true}));
+  const manager = new SeedManager(directory, {aria2: "/fake/aria2c", uploadLimit: "2M"});
+  await manager.load();
+  manager.ensureDaemon = async () => {};
+  const additions = [];
+  manager.rpc = async (method, params) => {
+    if (method === "aria2.addTorrent") additions.push(params);
+    return [];
+  };
+  const downloads = [1, 2, 3].map((number) => ({torrent: `torrent-${number}`,
+    infoHash: String(number).repeat(40), sizeBytes: number * 1024}));
+  const result = await manager.mirrorCatalog({schemaVersion: 2, items: downloads}, 1024 * 1024, 2);
+  assert.equal(result.managed, 2);
+  assert.equal(additions.length, 2);
+  assert.equal(additions[0][2]["max-upload-limit"], "2M");
+});

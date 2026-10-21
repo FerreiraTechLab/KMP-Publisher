@@ -110,6 +110,7 @@ class SeedManager {
     this.spawn = options.spawn || spawn;
     this.allocatePort = options.availablePort || availablePort;
     this.listenPort = options.listenPort || 6881;
+    this.uploadLimit = options.uploadLimit || "1M";
     this.allocateListenPort = options.availableListenPort || availableBitTorrentPort;
     this.portMapperProvided = Boolean(options.portMapper);
     this.portMapper = options.portMapper || new PortMapper(this.listenPort);
@@ -169,7 +170,7 @@ class SeedManager {
       `--rpc-listen=127.0.0.1:${rpcPort}`, `--rpc-secret=${rpcSecret}`,
       `--state-dir=${path.join(this.stateDirectory, "torrentd")}`,
       `--data-dir=${path.join(this.stateDirectory, "downloads")}`,
-      `--listen-port=${this.listenPort}`, "--upload-limit=1M"
+      `--listen-port=${this.listenPort}`, `--upload-limit=${this.uploadLimit}`
     ] : ["--enable-rpc=true", "--rpc-listen-all=false",
       `--rpc-listen-port=${rpcPort}`, `--rpc-secret=${rpcSecret}`,
       "--continue=true", "--auto-file-renaming=false", "--file-allocation=none",
@@ -251,7 +252,8 @@ class SeedManager {
     }
     return {...record, running: Boolean(runtime), backendAvailable: Boolean(this.backend), backendKind: this.backendKind,
       pid: this.daemon?.child.pid || null, startedAt: runtime?.startedAt || null,
-      listenPort: this.listenPort, portMapping: this.portMapper.details(), packageSizeBytes, transfer};
+      listenPort: this.listenPort, uploadLimit: this.uploadLimit,
+      portMapping: this.portMapper.details(), packageSizeBytes, transfer};
   }
   async registerProposal({id, version, sha256, packagePath, proposalPath, metadata, replaceId}) {
     const key = `${id}@${version}`;
@@ -261,7 +263,7 @@ class SeedManager {
       proposalPath: proposalPath || existing?.proposalPath || path.dirname(path.dirname(packagePath)),
       torrentPath: existing?.torrentPath || null, status: existing?.torrentPath ? "ready" : "awaiting-publication",
       publicationStatus: existing?.publicationStatus || "awaiting-publication",
-      uploadLimit: existing?.uploadLimit || "1M"};
+      uploadLimit: this.uploadLimit};
     if (existing) Object.assign(existing, value); else this.records.push(value);
     await this.save(); return value;
   }
@@ -291,12 +293,12 @@ class SeedManager {
     const gid = existing?.gid || await this.rpc("aria2.addTorrent", [
       (await fsp.readFile(record.torrentPath)).toString("base64"), [],
       {dir: path.dirname(record.packagePath), "check-integrity": "true", "continue": "true",
-        "seed-ratio": "0", "max-upload-limit": record.uploadLimit}]);
+        "seed-ratio": "0", "max-upload-limit": this.uploadLimit}]);
     this.processes.set(id, {gid, startedAt: new Date().toISOString()});
     record.status = "seeding"; delete record.error; await this.save();
     return record;
   }
-  async mirrorCatalog(catalog, limitBytes = 4 * 1024 * 1024 * 1024) {
+  async mirrorCatalog(catalog, limitBytes = 4 * 1024 * 1024 * 1024, maxPorts = 10) {
     await this.ensureDaemon();
     const candidates = catalog.schemaVersion === 3 ?
       catalog.items.flatMap((item) => item.release?.variants || []).map((variant) => variant.download) :
@@ -315,19 +317,20 @@ class SeedManager {
     await fsp.mkdir(directory, {recursive: true});
     let reservedBytes = 0, added = 0, managed = 0;
     for (const download of selected) {
+      if (managed >= maxPorts) break;
       if (reservedBytes + download.sizeBytes > limitBytes) continue;
       reservedBytes += download.sizeBytes; managed += 1;
       if (existing.has(String(download.infoHash).toLowerCase())) continue;
       await this.rpc("aria2.addTorrent", [download.torrent, [], {dir: directory,
         "continue": "true", "check-integrity": "true", "seed-ratio": "0",
-        "auto-file-renaming": "false"}]);
+        "auto-file-renaming": "false", "max-upload-limit": this.uploadLimit}]);
       added += 1;
       this.communityHashes.add(String(download.infoHash).toLowerCase());
     }
     await fsp.writeFile(this.communityFile, JSON.stringify({
       infoHashes: [...this.communityHashes].sort()
     }, null, 2) + "\n");
-    return {managed, added, reservedBytes, limitBytes};
+    return {managed, added, reservedBytes, limitBytes, maxPorts};
   }
   async stopCommunity() {
     if (!this.communityHashes.size) return {removed: 0};

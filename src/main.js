@@ -1,4 +1,4 @@
-const {app, BrowserWindow, dialog, ipcMain, safeStorage, shell} = require("electron");
+const {app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, safeStorage, shell, Tray} = require("electron");
 const fs = require("node:fs/promises");
 const path = require("node:path");
 const {inspectPackage} = require("./core/package-inspection");
@@ -9,12 +9,16 @@ const {generateTorrent} = require("./core/torrent-builder");
 const {GitHubPublisher} = require("./core/github-publisher");
 const {MetricsStore} = require("./core/metrics-store");
 const {resolveProposalPath} = require("./core/proposal-record");
+const {DistributionSettings} = require("./core/distribution-settings");
 
 let seedManager;
 let metricsStore;
 let applicationReady = false;
 let githubToken = null;
-let communityEnabled = true;
+let distributionSettings;
+let mainWindow = null;
+let tray = null;
+let isQuitting = false;
 const CATALOG_URL = "https://ferreiratechlab.github.io/KMP-catalog";
 
 function tokenPath() { return path.join(app.getPath("userData"), "github-token.enc"); }
@@ -93,7 +97,10 @@ async function synchronizePublishedSeeds() {
     activated += 1;
   }
   let community = null;
-  if (communityEnabled) community = await seedManager.mirrorCatalog(catalog);
+  const settings = distributionSettings.value;
+  if (settings.communityEnabled) community = await seedManager.mirrorCatalog(catalog,
+    settings.maxCommunityStorageGiB * 1024 * 1024 * 1024, settings.maxCommunityPorts);
+  else community = await seedManager.stopCommunity();
   return {sequence: catalog.sequence, activated, community};
 }
 
@@ -116,14 +123,44 @@ async function prepareAllLocalSeeds() {
 }
 
 function createWindow() {
-  const window = new BrowserWindow({
+  if (mainWindow && !mainWindow.isDestroyed()) { mainWindow.show(); mainWindow.focus(); return mainWindow; }
+  mainWindow = new BrowserWindow({
     width: 1120, height: 760, minWidth: 900, minHeight: 640,
     backgroundColor: "#09111f", title: "KMP Publisher",
     webPreferences: {preload: path.join(__dirname, "preload.js"), contextIsolation: true,
       nodeIntegration: false, sandbox: true}
   });
-  window.removeMenu();
-  window.loadFile(path.join(__dirname, "renderer/index.html"));
+  mainWindow.removeMenu();
+  mainWindow.loadFile(path.join(__dirname, "renderer/index.html"));
+  mainWindow.on("close", (event) => {
+    if (!isQuitting && distributionSettings?.value.runInBackground) {
+      event.preventDefault(); mainWindow.hide();
+    }
+  });
+  mainWindow.on("closed", () => { mainWindow = null; });
+  return mainWindow;
+}
+
+function updateTray() {
+  if (!distributionSettings?.value.runInBackground) {
+    if (tray) { tray.destroy(); tray = null; }
+    return;
+  }
+  if (tray) return;
+  const svg = '<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32"><rect width="32" height="32" rx="7" fill="#31cfa0"/><path d="M7 7h5v7l7-7h6l-9 9 9 9h-6l-7-7v7H7z" fill="#07151a"/></svg>';
+  const icon = nativeImage.createFromDataURL(`data:image/svg+xml;base64,${Buffer.from(svg).toString("base64")}`);
+  tray = new Tray(icon.resize({width: 22, height: 22}));
+  tray.setToolTip("KMP Publisher — distribuição ativa");
+  tray.setContextMenu(Menu.buildFromTemplate([
+    {label: "Abrir KMP Publisher", click: () => createWindow()},
+    {type: "separator"},
+    {label: "Encerrar", click: async () => {
+      isQuitting = true;
+      if (seedManager) await seedManager.shutdown();
+      app.quit();
+    }}
+  ]));
+  tray.on("click", () => createWindow());
 }
 
 ipcMain.handle("app:bootstrap", async () => ({ready: applicationReady, github: await githubIdentity()}));
@@ -192,13 +229,24 @@ ipcMain.handle("submission:export", async (_event, input, inspected, editingId) 
 });
 
 
-ipcMain.handle("community:status", () => ({enabled: communityEnabled}));
-ipcMain.handle("community:set", async (_event, enabled) => {
-  communityEnabled = Boolean(enabled);
-  await fs.writeFile(path.join(app.getPath("userData"), "community.json"),
-    JSON.stringify({enabled: communityEnabled}) + "\n");
-  const result = communityEnabled ? await synchronizePublishedSeeds() : await seedManager.stopCommunity();
-  return {ok: true, enabled: communityEnabled, result};
+ipcMain.handle("distribution:get", () => ({ok: true, settings: {...distributionSettings.value}}));
+ipcMain.handle("distribution:set", async (_event, value) => {
+  try {
+    const previous = distributionSettings.value;
+    const settings = await distributionSettings.save(value);
+    updateTray();
+    const uploadChanged = previous.uploadLimit !== settings.uploadLimit;
+    await seedManager.stopCommunity();
+    if (uploadChanged) {
+      await seedManager.shutdown();
+      seedManager.uploadLimit = settings.uploadLimit;
+      for (const record of seedManager.records) record.uploadLimit = settings.uploadLimit;
+      await seedManager.save();
+      await prepareAllLocalSeeds();
+    }
+    const result = settings.communityEnabled ? await synchronizePublishedSeeds() : {community: {removed: 0}};
+    return {ok: true, settings, result};
+  } catch (error) { return {ok: false, error: error.message}; }
 });
 ipcMain.handle("seeds:list", () => seedManager.list());
 ipcMain.handle("seeds:details", async (_event, id) => {
@@ -252,12 +300,15 @@ ipcMain.handle("seeds:sync", async () => {
 });
 
 app.whenReady().then(async () => {
-  seedManager = new SeedManager(path.join(app.getPath("userData"), "seeding"));
+  distributionSettings = new DistributionSettings(path.join(app.getPath("userData"), "distribution.json"));
+  const settings = await distributionSettings.load();
+  seedManager = new SeedManager(path.join(app.getPath("userData"), "seeding"),
+    {uploadLimit: settings.uploadLimit});
   metricsStore = new MetricsStore(path.join(app.getPath("userData"), "metrics.json"));
   await Promise.all([seedManager.load(), metricsStore.load()]);
   githubToken = await loadGitHubToken();
-  try { communityEnabled = JSON.parse(await fs.readFile(path.join(app.getPath("userData"), "community.json"))).enabled === true; } catch {}
   createWindow();
+  updateTray();
   (async () => {
     try { await prepareAllLocalSeeds(); await synchronizePublishedSeeds(); }
     catch (error) { console.error(error); }
@@ -265,11 +316,12 @@ app.whenReady().then(async () => {
   })();
   setInterval(() => synchronizePublishedSeeds().catch(() => {}), 5 * 60 * 1000).unref();
   setInterval(() => dashboardData().catch(() => {}), 10 * 1000).unref();
-  app.on("activate", () => { if (BrowserWindow.getAllWindows().length === 0) createWindow(); });
+  app.on("activate", () => createWindow());
 });
 app.on("window-all-closed", async () => {
+  if (distributionSettings?.value.runInBackground && !isQuitting) return;
+  if (seedManager) await seedManager.shutdown();
   if (process.platform !== "darwin") {
-    if (seedManager) await seedManager.shutdown();
     app.quit();
   }
 });

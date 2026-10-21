@@ -25,7 +25,8 @@
 
   <div id="app-shell" class="hidden">
     <header><div class="brand">KMP</div><div><h1>Publisher</h1><p id="account-label">Gerenciador de ports</p></div>
-      <button type="button" id="go-dashboard" class="header-button hidden">Dashboard</button><span class="version">v0.2</span></header>
+      <button type="button" id="go-dashboard" class="header-button hidden">Dashboard</button>
+      <button type="button" id="open-settings" class="icon-button settings-button" title="Configurações de distribuição" aria-label="Configurações de distribuição">⚙</button><span class="version">v0.3</span></header>
     <main>
       <section id="dashboard-view">
         <div class="dashboard-heading"><div><span class="eyebrow">VISÃO GERAL</span><h2>Seus ports</h2><p>Publicação e distribuição em um só lugar.</p></div>
@@ -36,8 +37,8 @@
           <article class="metric-card"><span>Downloads equivalentes</span><strong id="metric-downloads">0,0</strong><small>calculados pelos bytes enviados</small></article>
           <article class="metric-card"><span>Rede consumida</span><strong id="metric-network">0 B</strong><small>upload e download acumulados</small></article>
         </section>
-        <section class="dashboard-toolbar card"><div><h3>Nó comunitário</h3><p>Este computador mantém cópias dos ports e participa da distribuição.</p></div>
-          <label class="switch-label"><input id="community-node" type="checkbox" checked><span class="switch"></span><b id="community-label">Ativo</b></label></section>
+        <section class="dashboard-toolbar card"><div><h3>Nó comunitário</h3><p id="distribution-summary">Este computador mantém cópias dos ports e participa da distribuição.</p></div>
+          <button type="button" id="configure-distribution" class="secondary">Configurar</button></section>
         <section class="port-section"><div class="section-title"><div><h3>Publicados</h3><p>Clique em um port para abrir os detalhes da rede.</p></div><button id="refresh-dashboard" class="secondary">Atualizar</button></div>
           <div id="published-grid" class="ports-grid"></div><div id="published-empty" class="empty-state hidden">Nenhum port publicado ainda.</div></section>
         <section id="waiting-section" class="port-section"><div class="section-title"><div><h3>Aguardando publicação</h3><p>Propostas locais e revisões em andamento.</p></div></div>
@@ -82,5 +83,17 @@
     <div class="path-details"><div><strong>Pacote</strong><code id="seed-package-path"></code></div><div><strong>Torrent</strong><code id="seed-torrent-path"></code></div><div><strong>Infohash</strong><code id="seed-info-hash"></code></div></div>
     <div class="modal-actions"><button type="button" id="review-port" class="secondary">Enviar para revisão</button><button type="button" id="export-seed-torrent" class="secondary">Exportar .torrent</button><button type="button" id="update-port" class="secondary">Atualizar port</button><button type="button" id="toggle-seed" class="primary"></button></div>
   </dialog>
+  <dialog id="settings-modal" class="seed-modal settings-modal"><form id="distribution-form">
+    <div class="modal-heading"><div><span class="eyebrow">DISTRIBUIÇÃO DESCENTRALIZADA</span><h2>Configurações do nó</h2><p>Controle quanto este computador oferece à rede KMP.</p></div><button type="button" id="close-settings" class="icon-button">×</button></div>
+    <section class="settings-list">
+      <label class="setting-row"><span><strong>Nó comunitário</strong><small>Baixa e semeia cópias de outros ports automaticamente.</small></span><span class="switch-label"><input name="communityEnabled" type="checkbox" checked><span class="switch"></span></span></label>
+      <label class="setting-row"><span><strong>Continuar em segundo plano</strong><small>Ao fechar a janela, mantém os ports semeando na bandeja do sistema.</small></span><span class="switch-label"><input name="runInBackground" type="checkbox"><span class="switch"></span></span></label>
+      <label><span>Limite total de upload</span><select name="uploadLimit"><option value="256K">256 KiB/s</option><option value="512K">512 KiB/s</option><option value="1M">1 MiB/s</option><option value="2M">2 MiB/s</option><option value="5M">5 MiB/s</option><option value="10M">10 MiB/s</option><option value="0">Sem limite</option></select><small>Compartilhado entre todos os ports semeados.</small></label>
+      <label><span>Máximo de ports comunitários</span><input name="maxCommunityPorts" type="number" min="1" max="100" value="10"><small>Não limita os ports publicados por você.</small></label>
+      <label><span>Espaço para o nó comunitário (GiB)</span><input name="maxCommunityStorageGiB" type="number" min="1" max="100" step="1" value="4"><small>Limite reservado para cópias baixadas automaticamente.</small></label>
+    </section>
+    <p id="settings-message" class="messages hidden"></p>
+    <div class="modal-actions"><button type="button" id="cancel-settings" class="secondary">Cancelar</button><button type="submit" id="save-settings" class="primary">Salvar configurações</button></div>
+  </form></dialog>
   <script src="renderer.js"></script>
 </body></html>

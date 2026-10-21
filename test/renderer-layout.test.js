@@ -11,6 +11,7 @@ test("contains loading, mandatory login and dashboard states", () => {
   assert.match(html, /Rede consumida/);
 });
 test("keeps port management actions accessible", () => {
-  for (const id of ["add-port", "update-port", "seed-modal", "community-node"])
+  for (const id of ["add-port", "update-port", "seed-modal", "settings-modal", "open-settings",
+    "configure-distribution", "distribution-form"])
     assert.match(html, new RegExp(`id="${id}"`));
 });
