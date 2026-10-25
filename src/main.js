@@ -1,4 +1,4 @@
-const {app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, safeStorage, shell, Tray} = require("electron");
+const {app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, Notification, safeStorage, shell, Tray} = require("electron");
 const fs = require("node:fs/promises");
 const path = require("node:path");
 const {inspectPackage} = require("./core/package-inspection");
@@ -20,6 +20,8 @@ let mainWindow = null;
 let tray = null;
 let isQuitting = false;
 const CATALOG_URL = "https://ferreiratechlab.github.io/KMP-catalog";
+const singleInstance = app.requestSingleInstanceLock();
+if (!singleInstance) app.quit();
 
 function tokenPath() { return path.join(app.getPath("userData"), "github-token.enc"); }
 async function loadGitHubToken() {
@@ -123,7 +125,9 @@ async function prepareAllLocalSeeds() {
 }
 
 function createWindow() {
-  if (mainWindow && !mainWindow.isDestroyed()) { mainWindow.show(); mainWindow.focus(); return mainWindow; }
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.setSkipTaskbar(false); mainWindow.show(); mainWindow.focus(); return mainWindow;
+  }
   mainWindow = new BrowserWindow({
     width: 1120, height: 760, minWidth: 900, minHeight: 640,
     backgroundColor: "#09111f", title: "KMP Publisher",
@@ -134,7 +138,9 @@ function createWindow() {
   mainWindow.loadFile(path.join(__dirname, "renderer/index.html"));
   mainWindow.on("close", (event) => {
     if (!isQuitting && distributionSettings?.value.runInBackground) {
-      event.preventDefault(); mainWindow.hide();
+      event.preventDefault(); mainWindow.hide(); mainWindow.setSkipTaskbar(true);
+      if (Notification.isSupported()) new Notification({title: "KMP Publisher",
+        body: "A janela foi fechada, mas os ports continuam sendo semeados. Abra o Publisher novamente para restaurar a janela."}).show();
     }
   });
   mainWindow.on("closed", () => { mainWindow = null; });
@@ -299,7 +305,10 @@ ipcMain.handle("seeds:sync", async () => {
   catch (error) { return {ok: false, error: error.message}; }
 });
 
+app.on("second-instance", () => createWindow());
+
 app.whenReady().then(async () => {
+  if (!singleInstance) return;
   distributionSettings = new DistributionSettings(path.join(app.getPath("userData"), "distribution.json"));
   const settings = await distributionSettings.load();
   seedManager = new SeedManager(path.join(app.getPath("userData"), "seeding"),

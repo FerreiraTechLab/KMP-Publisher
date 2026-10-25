@@ -59,8 +59,11 @@ O estado de distribuição possui `ready`, `checking`, `seeding`, `stopped` e
 `published`. A GUI mostrará velocidade, peers, bytes enviados e limite de
 upload, além de permitir pausar ou remover cada seed. O binário aria2 será
 empacotado por plataforma; durante o desenvolvimento, o executável disponível
-no `PATH` pode ser usado. Uma etapa futura manterá o nó na bandeja e oferecerá
-inicialização automática com consentimento explícito.
+no `PATH` pode ser usado. O modo opcional em segundo plano mantém o nó na
+bandeja. No GNOME sem suporte a AppIndicator, iniciar novamente o Publisher
+restaura a janela da instância única já ativa. O protocolo gráfico escolhido
+pelo Electron é preservado para manter a compatibilidade com Wayland e X11. A
+inicialização automática continuará exigindo consentimento explícito.
 
 ## Distribuição
 
