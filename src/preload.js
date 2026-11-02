@@ -18,5 +18,7 @@ contextBridge.exposeInMainWorld("publisher", {
   connectGitHub: (token) => ipcRenderer.invoke("github:connect", token),
   githubStatus: () => ipcRenderer.invoke("github:status"),
   publishProposal: (id) => ipcRenderer.invoke("github:publish", id),
+  onPublishProgress: (callback) => ipcRenderer.on("publish:progress", (_event, progress) => callback(progress)),
+  reviewStatus: (id) => ipcRenderer.invoke("github:review-status", id),
   openExternal: (url) => ipcRenderer.invoke("external:open", url)
 });

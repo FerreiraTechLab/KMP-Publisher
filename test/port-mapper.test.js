@@ -23,7 +23,19 @@ test("falls back to NAT-PMP and closes the mapping", async () => {
   const status = await manager.start();
   assert.equal(status.active, true);
   assert.equal(status.method, "nat-pmp");
-  assert.equal(status.internetReachable, true);
+  assert.equal(status.internetReachable, false);
   await manager.stop();
   assert.equal(closed, true);
+});
+
+test("only reports internet reachability after an inbound connection", async () => {
+  const manager = new PortMapper(6881, {renewMilliseconds: 60000, factories: [
+    async () => ({method: "upnp", externalAddress: "8.8.8.8", renew: async () => {}, close: async () => {}})]});
+  await manager.start();
+  assert.equal(manager.details().internetReachable, false);
+  manager.confirmInbound(new Date("2026-11-01T21:00:00Z"));
+  assert.equal(manager.details().internetReachable, true);
+  assert.equal(manager.details().inboundConfirmedAt, "2026-11-01T21:00:00.000Z");
+  await manager.stop();
+  assert.equal(manager.details().inboundConfirmedAt, null);
 });

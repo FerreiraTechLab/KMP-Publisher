@@ -52,6 +52,9 @@ com permissão de conteúdo e pull requests no `KMP-catalog`. Quando o cofre
 criptográfico do sistema estiver disponível, a credencial é armazenada por ele;
 ela nunca é incluída na proposta ou enviada ao catálogo. O Publisher cria ou
 reutiliza o fork da conta, abre uma branch e envia a proposta para revisão.
+Pacotes acima de 95 MiB são enviados como asset de um Release de pré-lançamento
+no fork e anunciados como webseed do torrent, para que a validação não dependa
+de o seu computador aceitar conexões vindas da internet.
 
 O envio autenticado ao GitHub e o acompanhamento da revisão serão adicionados
 depois que o fluxo local for validado com autores de ports.

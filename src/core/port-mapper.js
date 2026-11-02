@@ -176,7 +176,13 @@ class PortMapper {
     this.factories = options.factories || [upnpMapping, natPmpMapping];
     this.mapping = null; this.timer = null;
     this.status = {active: false, method: null, port, addressScope: "unknown",
-      internetReachable: false, errors: []};
+      internetReachable: false, inboundConfirmedAt: null, errors: []};
+  }
+  // Roteadores aceitam mapeamentos UPnP que não encaminham nada, então só uma
+  // conexão iniciada por um peer da internet comprova que a porta está aberta.
+  confirmInbound(at = new Date()) {
+    if (this.status.inboundConfirmedAt) return;
+    this.status = {...this.status, internetReachable: true, inboundConfirmedAt: at.toISOString()};
   }
   async start() {
     if (this.mapping) return this.status;
@@ -187,11 +193,10 @@ class PortMapper {
     }
     if (!this.mapping) { this.status = {...this.status, errors}; return this.status; }
     const scope = addressScope(this.mapping.externalAddress);
-    this.status = {active: true, method: this.mapping.method, port: this.port,
-      externalAddress: this.mapping.externalAddress || null, addressScope: scope,
-      internetReachable: scope === "public", errors};
+    this.status = {...this.status, active: true, method: this.mapping.method, port: this.port,
+      externalAddress: this.mapping.externalAddress || null, addressScope: scope, errors};
     this.timer = setInterval(() => this.mapping?.renew().catch((error) => {
-      this.status = {...this.status, active: false, internetReachable: false, errors: [error.message]};
+      this.status = {...this.status, active: false, errors: [error.message]};
     }), this.renewMilliseconds);
     this.timer.unref();
     return this.status;
@@ -201,7 +206,7 @@ class PortMapper {
     this.timer = null;
     if (this.mapping) await this.mapping.close();
     this.mapping = null;
-    this.status = {...this.status, active: false, internetReachable: false};
+    this.status = {...this.status, active: false, internetReachable: false, inboundConfirmedAt: null};
   }
   details() { return {...this.status}; }
 }

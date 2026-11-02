@@ -3,7 +3,47 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs/promises");
 const os = require("node:os");
 const path = require("node:path");
-const {SeedManager, isPrivateAddress} = require("../src/core/seed-manager");
+const {SeedManager, ensureTorrentTrackers, ipv6Prefix64, isPrivateAddress} = require("../src/core/seed-manager");
+const {PortMapper} = require("../src/core/port-mapper");
+
+test("normalizes the IPv6 /64 prefix", () => {
+  assert.equal(ipv6Prefix64("2804:14d:72a4:8834::198a"), "2804:014d:72a4:8834");
+  assert.equal(ipv6Prefix64("2001:db8::1"), "2001:0db8:0000:0000");
+  assert.equal(ipv6Prefix64("186.207.175.252"), null);
+});
+
+test("only confirms inbound reachability from peers outside the local link", async () => {
+  const portMapper = new PortMapper(6882, {factories: [async () => ({method: "upnp",
+    externalAddress: "186.207.175.252", renew: async () => {}, close: async () => {}})]});
+  await portMapper.start();
+  const manager = new SeedManager(os.tmpdir(), {aria2: "/fake/aria2c", portMapper,
+    networkInterfaces: () => ({wlan0: [{family: "IPv6", address: "2804:14d:72a4:8834:323e:6f74:1d40:a71e"}]})});
+  manager.observeInbound([
+    {ip: "186.207.175.252", source: "I"},
+    {ip: "2804:14d:72a4:8834::198a", source: "I"},
+    {ip: "203.0.113.7", source: "Tr"}]);
+  assert.equal(portMapper.details().inboundConfirmedAt, null);
+  manager.observeInbound([{ip: "203.0.113.7", source: "I"}]);
+  assert.ok(portMapper.details().inboundConfirmedAt);
+  await portMapper.stop();
+});
+
+test("adds fallback trackers without changing the infohash", async (context) => {
+  const bencode = (await import("bencode")).default;
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), "kmp-publisher-trackers-"));
+  context.after(() => fs.rm(directory, {recursive: true, force: true}));
+  const torrentPath = path.join(directory, "legacy.torrent");
+  const info = {length: 7, name: "port.zip", "piece length": 16, pieces: Buffer.alloc(20)};
+  await fs.writeFile(torrentPath, bencode.encode({announce: "udp://one.example/announce",
+    "announce-list": [["udp://one.example/announce"], ["udp://two.example/announce"]], info}));
+  const first = await ensureTorrentTrackers(torrentPath);
+  const second = await ensureTorrentTrackers(torrentPath);
+  assert.equal(first.changed, true);
+  assert.equal(second.changed, false);
+  assert.equal(first.infoHash, second.infoHash);
+  const updated = bencode.decode(await fs.readFile(torrentPath));
+  assert.ok(updated["announce-list"].length > 2);
+});
 
 test("classifies local and Internet peer addresses", () => {
   assert.equal(isPrivateAddress("192.168.0.25"), true);
@@ -82,4 +122,21 @@ test("limits how many community ports are added", async (context) => {
   assert.equal(result.managed, 2);
   assert.equal(additions.length, 2);
   assert.equal(additions[0][2]["max-upload-limit"], "2M");
+});
+
+test("connects every active torrent to the catalog seed nodes", async () => {
+  const manager = new SeedManager(os.tmpdir(), {torrentd: "/fake/kmp-torrentd"});
+  const calls = [];
+  manager.daemon = {};
+  manager.rpc = async (method, params) => {
+    calls.push([method, params]);
+    if (method === "aria2.tellActive") return [{gid: "a1"}, {gid: "b2"}];
+    return 1;
+  };
+  const connected = await manager.connectSeedNodes(["163.176.18.211:6881", "inválido", 7]);
+  assert.equal(connected, 2);
+  assert.deepEqual(calls.filter(([method]) => method === "kmp.addPeers"),
+    [["kmp.addPeers", ["a1", ["163.176.18.211:6881"]]], ["kmp.addPeers", ["b2", ["163.176.18.211:6881"]]]]);
+  calls.length = 0;
+  assert.equal(await manager.connectSeedNodes(), 2, "a lista anterior é reutilizada ao iniciar um seed");
 });

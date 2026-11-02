@@ -4,8 +4,10 @@ const path = require("node:path");
 const {spawn} = require("node:child_process");
 const crypto = require("node:crypto");
 const net = require("node:net");
+const os = require("node:os");
 const dgram = require("node:dgram");
-const {PortMapper} = require("./port-mapper");
+const {PortMapper, addressScope} = require("./port-mapper");
+const {TRACKERS} = require("./torrent-builder");
 
 function availablePort() {
   return new Promise((resolve, reject) => {
@@ -71,6 +73,28 @@ async function validateTorrent(torrentPath, packagePath) {
   return crypto.createHash("sha1").update(bencode.encode(info)).digest("hex");
 }
 
+async function ensureTorrentTrackers(torrentPath) {
+  const bencode = (await import("bencode")).default;
+  const document = bencode.decode(await fsp.readFile(torrentPath));
+  if (!document?.info) throw new Error("Torrent inválido: bloco info ausente.");
+  const before = crypto.createHash("sha1").update(bencode.encode(document.info)).digest("hex");
+  const tiers = Array.isArray(document["announce-list"]) ? document["announce-list"] : [];
+  const existing = new Set(tiers.flatMap((tier) => Array.isArray(tier) ? tier : [tier])
+    .map((value) => Buffer.from(value).toString("utf8")).filter(Boolean));
+  if (document.announce) existing.add(Buffer.from(document.announce).toString("utf8"));
+  const missing = TRACKERS.filter((tracker) => !existing.has(tracker));
+  if (!missing.length) return {changed: false, infoHash: before};
+  document["announce-list"] = [...tiers, ...missing.map((tracker) => [tracker])];
+  if (!document.announce) document.announce = TRACKERS[0];
+  const encoded = Buffer.from(bencode.encode(document));
+  const temporary = `${torrentPath}.tmp`;
+  await fsp.writeFile(temporary, encoded);
+  await fsp.rename(temporary, torrentPath);
+  const after = crypto.createHash("sha1").update(bencode.encode(document.info)).digest("hex");
+  if (after !== before) throw new Error("A atualização dos trackers alterou indevidamente o infohash.");
+  return {changed: true, infoHash: after};
+}
+
 function findExecutable(name, environment = process.env) {
   const extensions = process.platform === "win32" ? [".exe", ".cmd", ""] : [""];
   for (const directory of String(environment.PATH || "").split(path.delimiter).filter(Boolean)) {
@@ -107,6 +131,7 @@ class SeedManager {
     this.backend = this.torrentd || this.aria2;
     this.backendKind = this.torrentd ? "kmp-torrentd" : "aria2";
     this.fetch = options.fetch || globalThis.fetch;
+    this.networkInterfaces = options.networkInterfaces || os.networkInterfaces;
     this.spawn = options.spawn || spawn;
     this.allocatePort = options.availablePort || availablePort;
     this.listenPort = options.listenPort || 6881;
@@ -119,6 +144,7 @@ class SeedManager {
     this.exitPromise = null;
     this.processes = new Map();
     this.records = [];
+    this.seedNodes = [];
     this.lastDaemonError = "";
   }
   async load() {
@@ -212,8 +238,24 @@ class SeedManager {
     }
     return null;
   }
+  // kmp-torrentd marca com origem "I" as conexões que um peer abriu até nós. Peers
+  // atrás do mesmo modem chegam pelo nosso IP externo (NAT loopback) ou pelo mesmo
+  // prefixo IPv6 e não comprovam que a internet alcança a porta.
+  observeInbound(peers) {
+    const externalAddress = this.portMapper.details().externalAddress;
+    const localPrefixes = new Set(Object.values(this.networkInterfaces()).flat()
+      .filter((item) => item?.family === "IPv6" || item?.family === 6)
+      .map((item) => ipv6Prefix64(item.address)).filter(Boolean));
+    if ((peers || []).some((peer) => peer.source === "I" && addressScope(peer.ip) === "public" &&
+        peer.ip !== externalAddress && !localPrefixes.has(ipv6Prefix64(peer.ip))))
+      this.portMapper.confirmInbound();
+  }
   async networkSnapshot() {
     if (!this.daemon) return [];
+    if (this.backendKind === "kmp-torrentd" && !this.portMapper.details().inboundConfirmedAt) {
+      for (const runtime of this.processes.values())
+        this.observeInbound(await this.rpc("aria2.getPeers", [runtime.gid]).catch(() => []));
+    }
     const keys = ["gid", "status", "infoHash", "totalLength", "completedLength",
       "uploadLength", "downloadLength", "downloadSpeed", "uploadSpeed", "connections"];
     const byHash = new Map();
@@ -242,6 +284,7 @@ class SeedManager {
         transfer.peers = Array.isArray(peers) ? peers.length : 0;
         transfer.remotePeers = (peers || []).filter((peer) => !isPrivateAddress(peer.ip)).length;
         transfer.holePunchPeers = (peers || []).filter((peer) => peer.source === "C").length;
+        if (this.backendKind === "kmp-torrentd") this.observeInbound(peers);
         if (this.backendKind === "kmp-torrentd") {
           const network = await this.rpc("kmp.getNetworkStats");
           const torrentNetwork = (network.torrents || []).find((item) =>
@@ -283,6 +326,7 @@ class SeedManager {
     await Promise.all([fsp.access(record.packagePath), fsp.access(record.torrentPath)]);
     if (await fileSha256(record.packagePath) !== record.sha256)
       throw new Error("O ZIP mudou depois do registro e não pode ser semeado.");
+    await ensureTorrentTrackers(record.torrentPath);
     await validateTorrent(record.torrentPath, record.packagePath);
     await this.ensureDaemon();
     let existing = await this.findTorrent(record.infoHash);
@@ -296,7 +340,20 @@ class SeedManager {
         "seed-ratio": "0", "max-upload-limit": this.uploadLimit}]);
     this.processes.set(id, {gid, startedAt: new Date().toISOString()});
     record.status = "seeding"; delete record.error; await this.save();
+    await this.connectSeedNodes().catch(() => 0);
     return record;
+  }
+  // O publicador atrás de NAT só alcança os nós públicos por conexão de saída, e o
+  // tracker pode levar uma hora para sugeri-los; por isso eles entram direto em
+  // cada torrent ativo, e de novo a cada sincronização, já que peers que falham saem da lista.
+  async connectSeedNodes(nodes = this.seedNodes) {
+    this.seedNodes = (Array.isArray(nodes) ? nodes : []).filter((node) =>
+      typeof node === "string" && /^\d{1,3}(?:\.\d{1,3}){3}:\d{1,5}$/.test(node)).slice(0, 16);
+    if (!this.daemon || this.backendKind !== "kmp-torrentd" || !this.seedNodes.length) return 0;
+    let connected = 0;
+    for (const item of await this.rpc("aria2.tellActive", [["gid"]]) || [])
+      connected += await this.rpc("kmp.addPeers", [item.gid, this.seedNodes]).catch(() => 0);
+    return connected;
   }
   async mirrorCatalog(catalog, limitBytes = 4 * 1024 * 1024 * 1024, maxPorts = 10) {
     await this.ensureDaemon();
@@ -372,6 +429,17 @@ class SeedManager {
   }
 }
 
+function ipv6Prefix64(address) {
+  const value = String(address || "").toLowerCase().split("%")[0];
+  if (net.isIP(value) !== 6) return null;
+  const [head, tail = ""] = value.split("::");
+  const left = head ? head.split(":") : [];
+  const right = value.includes("::") && tail ? tail.split(":") : [];
+  const groups = value.includes("::") ?
+    [...left, ...Array(8 - left.length - right.length).fill("0"), ...right] : left;
+  return groups.slice(0, 4).map((group) => group.padStart(4, "0")).join(":");
+}
+
 function isPrivateAddress(address) {
   let value = String(address || "").toLowerCase();
   if (value.startsWith("::ffff:")) value = value.slice(7);
@@ -383,4 +451,4 @@ function isPrivateAddress(address) {
 }
 
 module.exports = {SeedManager, availableBitTorrentPort, availablePort, bundledTorrentd,
-  findExecutable, isPrivateAddress, validateTorrent};
+  ensureTorrentTrackers, findExecutable, ipv6Prefix64, isPrivateAddress, validateTorrent};

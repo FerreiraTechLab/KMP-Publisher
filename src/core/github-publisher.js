@@ -1,10 +1,13 @@
 const fs = require("node:fs/promises");
+const {createReadStream} = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 const {spawn} = require("node:child_process");
+const {writeTorrentWithWebSeeds} = require("./torrent-builder");
 
 const UPSTREAM = "FerreiraTechLab/KMP-catalog";
 const MAX_GITHUB_FILE = 95 * 1024 * 1024;
+const MAX_RELEASE_ASSET = 2 * 1024 * 1024 * 1024 - 1;
 
 function safeSegment(value) {
   return String(value).toLowerCase().replace(/[^a-z0-9._-]+/g, "-").replace(/^-+|-+$/g, "");
@@ -31,10 +34,11 @@ class GitHubPublisher {
     this.sleep = options.sleep || ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
     this.git = options.git || runGit;
     this.upstream = options.upstream || UPSTREAM;
+    this.onProgress = options.onProgress || (() => {});
   }
 
   async request(route, options = {}) {
-    const response = await this.fetch(`https://api.github.com${route}`, {
+    const response = await this.fetch(route.startsWith("https://") ? route : `https://api.github.com${route}`, {
       ...options,
       headers: {Accept: "application/vnd.github+json", Authorization: `Bearer ${this.token}`,
         "X-GitHub-Api-Version": "2022-11-28", "Content-Type": "application/json", ...options.headers}
@@ -50,7 +54,30 @@ class GitHubPublisher {
 
   async identity() { return this.request("/user"); }
 
+  async reviewStatus(pullNumber) {
+    const [owner, repository] = this.upstream.split("/");
+    const pull = await this.request(`/repos/${owner}/${repository}/pulls/${pullNumber}`);
+    if (pull.state === "closed" && !pull.merged_at) return {state: "closed", label: "Revisão encerrada",
+      message: "O pull request foi fechado sem publicação.", url: pull.html_url};
+    const checks = await this.request(`/repos/${owner}/${repository}/commits/${pull.head.sha}/check-runs`);
+    const runs = checks.check_runs || [];
+    const failed = runs.find((run) => ["failure", "cancelled", "timed_out", "action_required"].includes(run.conclusion));
+    if (failed) return {state: "failure", label: `${pull.merged_at ? "Mesclado, mas a validação falhou" : "Validação falhou"} · ${failed.name}`,
+      message: failed.output?.summary || failed.output?.title || "Abra os detalhes do check para consultar o erro.",
+      url: failed.details_url || pull.html_url};
+    if (pull.merged_at) return {state: "merged", label: "Revisão mesclada",
+      message: "A proposta foi aceita. Aguarde a publicação do próximo catálogo assinado.", url: pull.html_url};
+    if (runs.length && runs.every((run) => run.status === "completed" && ["success", "neutral", "skipped"].includes(run.conclusion)))
+      return {state: "success", label: "Validação aprovada",
+        message: "Todos os checks terminaram com sucesso. A proposta está pronta para revisão ou publicação.", url: pull.html_url};
+    const active = runs.find((run) => run.status !== "completed");
+    return {state: "pending", label: active ? `Validando · ${active.name}` : "Aguardando validação",
+      message: "Mantenha o Publisher aberto e semeando enquanto o GitHub obtém e verifica o pacote.",
+      url: active?.details_url || pull.html_url};
+  }
+
   async step(label, operation) {
+    this.onProgress({stage: label});
     try { return await operation(); }
     catch (error) {
       const wrapped = new Error(`${label}: ${error.message}`);
@@ -75,15 +102,44 @@ class GitHubPublisher {
     return fork;
   }
 
-  async synchronizeFork(login, repository, baseBranch) {
-    return this.request(`/repos/${login}/${repository}/merge-upstream`, {method: "POST",
-      body: JSON.stringify({branch: baseBranch})});
+  // Semente HTTP extra para pacotes fora do Git. O pull request abre antes do upload, que
+  // segue em segundo plano: em conexões domésticas lentas ele leva mais de uma hora e uma
+  // única pausa da rede o derruba, enquanto o swarm e o nó público recebem as peças de
+  // forma retomável. A URL do asset é previsível, então já entra no torrent do PR.
+  async prepareSeedRelease(login, repository, baseBranch, record) {
+    const name = path.basename(record.packagePath);
+    if (!/^[A-Za-z0-9._-]+$/.test(name)) return {seedUrl: null, upload: null};
+    const tag = `kmp-seed-${safeSegment(record.portId)}-${safeSegment(record.version)}-${record.sha256.slice(0, 12)}`;
+    const size = (await fs.stat(record.packagePath)).size;
+    let release;
+    try { release = await this.request(`/repos/${login}/${repository}/releases/tags/${encodeURIComponent(tag)}`); }
+    catch (error) { if (error.status !== 404) throw error; }
+    if (!release) release = await this.request(`/repos/${login}/${repository}/releases`, {method: "POST",
+      body: JSON.stringify({tag_name: tag, target_commitish: baseBranch, prerelease: true,
+        name: `Semente ${record.portId} ${record.version}`,
+        body: `Semente HTTP do KMP Publisher.\n\n- SHA-256: \`${record.sha256}\`\n- Infohash: \`${record.infoHash}\``})});
+    for (const asset of release.assets || []) {
+      if (asset.state === "uploaded" && asset.size === size) return {seedUrl: asset.browser_download_url, upload: null};
+      await this.request(`/repos/${login}/${repository}/releases/assets/${asset.id}`, {method: "DELETE"});
+    }
+    const uploadUrl = `${release.upload_url.replace(/\{.*\}$/, "")}?name=${encodeURIComponent(name)}`;
+    return {seedUrl: `https://github.com/${login}/${repository}/releases/download/${tag}/${name}`,
+      upload: () => this.step("Envio do pacote ao Release do fork", async () => (await this.request(uploadUrl, {
+        method: "POST", duplex: "half", headers: {"Content-Type": "application/zip", "Content-Length": String(size)},
+        body: this.countedStream(record.packagePath, size)})).browser_download_url)};
   }
 
-  async validateFileSize(filePath) {
-    const stat = await fs.stat(filePath);
-    if (stat.size > MAX_GITHUB_FILE)
-      throw new Error(`${path.basename(filePath)} excede o limite de arquivo do GitHub (95 MiB).`);
+  // O upload de um pacote grande leva minutos; o Publisher precisa mostrar que ele avança.
+  async *countedStream(filePath, total) {
+    let sent = 0, reportedAt = 0;
+    for await (const chunk of createReadStream(filePath)) {
+      sent += chunk.length;
+      if (Date.now() - reportedAt >= 500 || sent === total) {
+        reportedAt = Date.now();
+        this.onProgress({stage: "Envio do pacote ao Release do fork", sent, total});
+      }
+      yield chunk;
+    }
   }
 
   async pushBranch(login, repository, baseBranch, branch, files) {
@@ -123,23 +179,32 @@ class GitHubPublisher {
     const upstream = await this.step("Leitura do catálogo", () => this.request(`/repos/${owner}/${repository}`));
     const baseBranch = upstream.default_branch;
     await this.step("Preparação do fork", () => this.ensureFork(user.login, repository));
-    await this.step("Sincronização do fork", () => this.synchronizeFork(user.login, repository, baseBranch));
     const prefix = `submissions/${safeSegment(record.portId)}/${safeSegment(record.version)}`;
-    const files = [
-      [submissionPath, `${prefix}/submission.json`],
-      [record.packagePath, `${prefix}/packages/${path.basename(record.packagePath)}`],
-      [torrentPath, `${prefix}/torrents/${path.basename(torrentPath)}`]
-    ];
-    await this.step("Validação do tamanho dos arquivos", () =>
-      Promise.all(files.map(([source]) => this.validateFileSize(source))));
-    const branch = `publisher/${safeSegment(record.portId)}-${safeSegment(record.version)}-${Date.now()}`;
-    await this.step("Envio da branch", () => this.pushBranch(user.login, repository, baseBranch, branch, files));
-    const pull = await this.step("Abertura do pull request", () => this.request(`/repos/${owner}/${repository}/pulls`, {method: "POST",
-      body: JSON.stringify({title: `Publicar ${submission.project.name} ${record.version}`,
-        head: `${user.login}:${branch}`, base: baseBranch,
-        body: `Proposta criada pelo KMP Publisher.\n\n- Port: \`${record.portId}\`\n- Versão: \`${record.version}\`\n- SHA-256: \`${record.sha256}\`\n- Infohash: \`${record.infoHash}\``})}));
-    return {login: user.login, pullNumber: pull.number, pullUrl: pull.html_url};
+    const packageSize = (await fs.stat(record.packagePath)).size;
+    const packageIsHosted = packageSize <= MAX_GITHUB_FILE;
+    const {seedUrl, upload} = packageIsHosted || packageSize > MAX_RELEASE_ASSET ? {seedUrl: null, upload: null} :
+      await this.step("Preparação do Release do fork", () => this.prepareSeedRelease(user.login, repository, baseBranch, record));
+    const scratch = seedUrl ? await fs.mkdtemp(path.join(os.tmpdir(), "kmp-publisher-torrent-")) : null;
+    try {
+      const submittedTorrent = scratch ? (await writeTorrentWithWebSeeds(torrentPath,
+        path.join(scratch, path.basename(torrentPath)), [seedUrl])).torrentPath : torrentPath;
+      const files = [
+        [submissionPath, `${prefix}/submission.json`],
+        ...(packageIsHosted ? [[record.packagePath, `${prefix}/packages/${path.basename(record.packagePath)}`]] : []),
+        [submittedTorrent, `${prefix}/torrents/${path.basename(torrentPath)}`]
+      ];
+      const branch = `publisher/${safeSegment(record.portId)}-${safeSegment(record.version)}-${Date.now()}`;
+      await this.step("Envio da branch", () => this.pushBranch(user.login, repository, baseBranch, branch, files));
+      const hosting = packageIsHosted ? "no repositório" :
+        seedUrl ? `swarm e nó público, com cópia no Release do fork${upload ? " enviada em segundo plano" : ""} (${seedUrl})` :
+        "swarm e nó público";
+      const pull = await this.step("Abertura do pull request", () => this.request(`/repos/${owner}/${repository}/pulls`, {method: "POST",
+        body: JSON.stringify({title: `Publicar ${submission.project.name} ${record.version}`,
+          head: `${user.login}:${branch}`, base: baseBranch,
+          body: `Proposta criada pelo KMP Publisher.\n\n- Port: \`${record.portId}\`\n- Versão: \`${record.version}\`\n- SHA-256: \`${record.sha256}\`\n- Infohash: \`${record.infoHash}\`\n- Pacote: ${hosting}\n\n> Mantenha o Publisher aberto e semeando para reforçar o swarm durante a validação.`})}));
+      return {login: user.login, pullNumber: pull.number, pullUrl: pull.html_url, seedUrl, upload};
+    } finally { if (scratch) await fs.rm(scratch, {recursive: true, force: true}); }
   }
 }
 
-module.exports = {GitHubPublisher, safeSegment, runGit, UPSTREAM};
+module.exports = {GitHubPublisher, safeSegment, runGit, UPSTREAM, MAX_GITHUB_FILE, MAX_RELEASE_ASSET};

@@ -9,14 +9,17 @@ const {generateTorrent} = require("./core/torrent-builder");
 const {GitHubPublisher} = require("./core/github-publisher");
 const {MetricsStore} = require("./core/metrics-store");
 const {resolveProposalPath} = require("./core/proposal-record");
-const {DistributionSettings} = require("./core/distribution-settings");
+const {DistributionSettings, normalizeDistributionSettings} = require("./core/distribution-settings");
+const {StartupManager} = require("./core/startup-manager");
 
 let seedManager;
 let metricsStore;
 let applicationReady = false;
 let githubToken = null;
 let distributionSettings;
+let startupManager;
 let mainWindow = null;
+const publishing = new Map();
 let tray = null;
 let isQuitting = false;
 const CATALOG_URL = "https://ferreiratechlab.github.io/KMP-catalog";
@@ -86,11 +89,12 @@ async function synchronizePublishedSeeds() {
     const torrentPath = path.join(torrentDirectory, `${record.portId}-${record.version}.torrent`);
     const candidatePath = torrentPath + ".published";
     await fs.writeFile(candidatePath, Buffer.from(download.torrent, "base64"));
+    // validateTorrent confere cada peça contra o ZIP local: um infohash diferente só pode
+    // vir de outro tamanho de peça (por exemplo, para caber no limite do catálogo), então
+    // a semente passa a usar o torrent publicado.
     const publishedInfoHash = await validateTorrent(candidatePath, record.packagePath);
-    if (record.infoHash && publishedInfoHash !== record.infoHash) {
-      await fs.rm(candidatePath, {force: true});
-      throw new Error(`O catálogo publicou um torrent diferente para ${record.id}.`);
-    }
+    if (record.infoHash && publishedInfoHash !== record.infoHash && seedManager.processes.has(record.id))
+      await seedManager.stop(record.id);
     await fs.rename(candidatePath, torrentPath);
     await seedManager.attachTorrent(record.id, torrentPath);
     record.publicationStatus = "published";
@@ -103,7 +107,8 @@ async function synchronizePublishedSeeds() {
   if (settings.communityEnabled) community = await seedManager.mirrorCatalog(catalog,
     settings.maxCommunityStorageGiB * 1024 * 1024 * 1024, settings.maxCommunityPorts);
   else community = await seedManager.stopCommunity();
-  return {sequence: catalog.sequence, activated, community};
+  const seedNodes = await seedManager.connectSeedNodes(catalog.extensions?.["kmp.seed-nodes"]).catch(() => 0);
+  return {sequence: catalog.sequence, activated, community, seedNodes};
 }
 
 async function prepareLocalSeed(record, torrentDirectory) {
@@ -124,12 +129,13 @@ async function prepareAllLocalSeeds() {
   }
 }
 
-function createWindow() {
+function createWindow(options = {}) {
   if (mainWindow && !mainWindow.isDestroyed()) {
     mainWindow.setSkipTaskbar(false); mainWindow.show(); mainWindow.focus(); return mainWindow;
   }
   mainWindow = new BrowserWindow({
     width: 1120, height: 760, minWidth: 900, minHeight: 640,
+    show: options.show !== false, skipTaskbar: options.show === false,
     backgroundColor: "#09111f", title: "KMP Publisher",
     webPreferences: {preload: path.join(__dirname, "preload.js"), contextIsolation: true,
       nodeIntegration: false, sandbox: true}
@@ -239,7 +245,9 @@ ipcMain.handle("distribution:get", () => ({ok: true, settings: {...distributionS
 ipcMain.handle("distribution:set", async (_event, value) => {
   try {
     const previous = distributionSettings.value;
-    const settings = await distributionSettings.save(value);
+    const requested = normalizeDistributionSettings(value);
+    await startupManager.setEnabled(requested.startWithSystem);
+    const settings = await distributionSettings.save(requested);
     updateTray();
     const uploadChanged = previous.uploadLimit !== settings.uploadLimit;
     await seedManager.stopCommunity();
@@ -256,7 +264,7 @@ ipcMain.handle("distribution:set", async (_event, value) => {
 });
 ipcMain.handle("seeds:list", () => seedManager.list());
 ipcMain.handle("seeds:details", async (_event, id) => {
-  try { return {ok: true, seed: await seedManager.details(id)}; }
+  try { return {ok: true, seed: {...await seedManager.details(id), publishing: publishing.get(id) || null}}; }
   catch (error) { return {ok: false, error: error.message}; }
 });
 ipcMain.handle("seeds:export-torrent", async (_event, id) => {
@@ -281,13 +289,48 @@ ipcMain.handle("github:connect", async (_event, token) => {
   } catch (error) { return {ok: false, error: error.message}; }
 });
 ipcMain.handle("github:status", githubIdentity);
+// O envio de um pacote grande ao Release leva minutos: o progresso vai para a janela e
+// o último erro fica na proposta, para não depender de um alerta que some.
+function reportPublishing(id, state) {
+  if (state) publishing.set(id, state); else publishing.delete(id);
+  if (mainWindow && !mainWindow.isDestroyed())
+    mainWindow.webContents.send("publish:progress", {id, ...(state || {done: true})});
+}
+// A cópia no Release é opcional: uma falha nela não desfaz o pull request, porque o
+// pacote continua chegando ao nó público e ao CI pelo swarm.
+async function uploadSeedRelease(id, record, upload) {
+  try { await upload(); delete record.seedUploadError; }
+  catch (error) { record.seedUploadError = {message: error.message, at: new Date().toISOString()}; }
+  finally { await seedManager.save().catch(() => {}); reportPublishing(id, null); }
+}
 ipcMain.handle("github:publish", async (_event, id) => {
+  if (publishing.has(id)) return {ok: false, error: "O envio desta proposta já está em andamento."};
+  const record = seedManager.records.find((item) => item.id === id);
+  let upload = null;
+  try {
+    if (!record) throw new Error("Proposta não encontrada.");
+    reportPublishing(id, {stage: "Preparação do envio", startedAt: new Date().toISOString()});
+    const startedAt = publishing.get(id).startedAt;
+    const {upload: pending, ...result} = await new GitHubPublisher(githubToken, {
+      onProgress: (progress) => reportPublishing(id, {...progress, startedAt})}).publish(record);
+    record.pullRequest = result; record.submissionStatus = "in-review";
+    delete record.submissionError; delete record.seedUploadError;
+    await seedManager.save();
+    upload = pending;
+    if (upload) uploadSeedRelease(id, record, upload);
+    return {ok: true, ...result};
+  } catch (error) {
+    if (record) { record.submissionError = {message: error.message, at: new Date().toISOString()}; await seedManager.save(); }
+    return {ok: false, error: error.message};
+  } finally { if (!upload) reportPublishing(id, null); }
+});
+ipcMain.handle("github:review-status", async (_event, id) => {
   try {
     const record = seedManager.records.find((item) => item.id === id);
-    if (!record) throw new Error("Proposta não encontrada.");
-    const result = await new GitHubPublisher(githubToken).publish(record);
-    record.pullRequest = result; record.submissionStatus = "in-review"; await seedManager.save();
-    return {ok: true, ...result};
+    if (!record?.pullRequest?.pullNumber) return {ok: true, status: null};
+    const status = await new GitHubPublisher(githubToken).reviewStatus(record.pullRequest.pullNumber);
+    record.pullRequest.status = status; await seedManager.save();
+    return {ok: true, status};
   } catch (error) { return {ok: false, error: error.message}; }
 });
 ipcMain.handle("external:open", (_event, url) => shell.openExternal(url));
@@ -311,12 +354,15 @@ app.whenReady().then(async () => {
   if (!singleInstance) return;
   distributionSettings = new DistributionSettings(path.join(app.getPath("userData"), "distribution.json"));
   const settings = await distributionSettings.load();
+  startupManager = new StartupManager(app);
+  try { await startupManager.setEnabled(settings.startWithSystem); }
+  catch (error) { console.error("Não foi possível sincronizar a inicialização automática:", error); }
   seedManager = new SeedManager(path.join(app.getPath("userData"), "seeding"),
     {uploadLimit: settings.uploadLimit});
   metricsStore = new MetricsStore(path.join(app.getPath("userData"), "metrics.json"));
   await Promise.all([seedManager.load(), metricsStore.load()]);
   githubToken = await loadGitHubToken();
-  createWindow();
+  createWindow({show: !process.argv.includes("--background")});
   updateTray();
   (async () => {
     try { await prepareAllLocalSeeds(); await synchronizePublishedSeeds(); }
