@@ -20,7 +20,8 @@ jobs:
             target: --win nsis
             files: release/*.exe
           - os: macos-latest
-            target: --mac dmg
+            # Arquiteturas explícitas: só "--mac dmg" gera apenas a da máquina (arm64).
+            target: --mac dmg --x64 --arm64
             files: release/*.dmg
     runs-on: ${{ matrix.os }}
     env:
