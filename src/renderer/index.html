@@ -79,7 +79,7 @@
   </div>
 
   <dialog id="seed-modal" class="seed-modal"><div class="modal-heading"><div><span class="eyebrow">DISTRIBUIÇÃO DO PORT</span><h2 id="seed-modal-title">Detalhes</h2></div><button type="button" id="close-seed-modal" class="icon-button">×</button></div>
-    <div id="seed-modal-status" class="modal-status"></div><div id="seed-modal-details" class="detail-grid"></div>
+    <div id="seed-modal-status" class="modal-status"></div><div id="review-status" class="review-status hidden"><strong id="review-status-title"></strong><p id="review-status-message"></p><button type="button" id="open-review-status" class="secondary">Abrir detalhes no GitHub</button></div><div id="seed-modal-details" class="detail-grid"></div>
     <div class="path-details"><div><strong>Pacote</strong><code id="seed-package-path"></code></div><div><strong>Torrent</strong><code id="seed-torrent-path"></code></div><div><strong>Infohash</strong><code id="seed-info-hash"></code></div></div>
     <div class="modal-actions"><button type="button" id="review-port" class="secondary">Enviar para revisão</button><button type="button" id="export-seed-torrent" class="secondary">Exportar .torrent</button><button type="button" id="update-port" class="secondary">Atualizar port</button><button type="button" id="toggle-seed" class="primary"></button></div>
   </dialog>
@@ -88,6 +88,7 @@
     <section class="settings-list">
       <label class="setting-row"><span><strong>Nó comunitário</strong><small>Baixa e semeia cópias de outros ports automaticamente.</small></span><span class="switch-label"><input name="communityEnabled" type="checkbox" checked><span class="switch"></span></span></label>
       <label class="setting-row"><span><strong>Continuar em segundo plano</strong><small>Ao fechar a janela, mantém os ports semeando na bandeja do sistema.</small></span><span class="switch-label"><input name="runInBackground" type="checkbox"><span class="switch"></span></span></label>
+      <label class="setting-row"><span><strong>Iniciar com o sistema</strong><small>Abre o nó automaticamente, com a janela oculta, ao entrar na sua conta.</small></span><span class="switch-label"><input name="startWithSystem" type="checkbox"><span class="switch"></span></span></label>
       <label><span>Limite total de upload</span><select name="uploadLimit"><option value="256K">256 KiB/s</option><option value="512K">512 KiB/s</option><option value="1M">1 MiB/s</option><option value="2M">2 MiB/s</option><option value="5M">5 MiB/s</option><option value="10M">10 MiB/s</option><option value="0">Sem limite</option></select><small>Compartilhado entre todos os ports semeados.</small></label>
       <label><span>Máximo de ports comunitários</span><input name="maxCommunityPorts" type="number" min="1" max="100" value="10"><small>Não limita os ports publicados por você.</small></label>
       <label><span>Espaço para o nó comunitário (GiB)</span><input name="maxCommunityStorageGiB" type="number" min="1" max="100" step="1" value="4"><small>Limite reservado para cópias baixadas automaticamente.</small></label>

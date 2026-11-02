@@ -3,6 +3,7 @@ const fs = require("node:fs/promises");
 const DEFAULTS = Object.freeze({
   communityEnabled: true,
   runInBackground: false,
+  startWithSystem: false,
   uploadLimit: "1M",
   maxCommunityPorts: 10,
   maxCommunityStorageGiB: 4
@@ -13,9 +14,11 @@ function normalizeDistributionSettings(value = {}) {
   const uploadLimit = String(value.uploadLimit || DEFAULTS.uploadLimit).toUpperCase();
   const maxCommunityPorts = Number(value.maxCommunityPorts);
   const maxCommunityStorageGiB = Number(value.maxCommunityStorageGiB);
+  const startWithSystem = value.startWithSystem === true;
   return {
     communityEnabled: value.communityEnabled !== false,
-    runInBackground: value.runInBackground === true,
+    runInBackground: value.runInBackground === true || startWithSystem,
+    startWithSystem,
     uploadLimit: UPLOAD_LIMITS.has(uploadLimit) ? uploadLimit : DEFAULTS.uploadLimit,
     maxCommunityPorts: Number.isInteger(maxCommunityPorts) && maxCommunityPorts >= 1 && maxCommunityPorts <= 100 ?
       maxCommunityPorts : DEFAULTS.maxCommunityPorts,

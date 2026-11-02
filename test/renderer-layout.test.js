@@ -15,3 +15,8 @@ test("keeps port management actions accessible", () => {
     "configure-distribution", "distribution-form"])
     assert.match(html, new RegExp(`id="${id}"`));
 });
+
+test("offers background and system startup controls", () => {
+  assert.match(html, /name="runInBackground"/);
+  assert.match(html, /name="startWithSystem"/);
+});

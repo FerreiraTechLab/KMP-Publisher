@@ -16,9 +16,17 @@ test("persists distribution settings", async (context) => {
   context.after(() => fs.rm(directory, {recursive: true, force: true}));
   const file = path.join(directory, "distribution.json");
   const settings = new DistributionSettings(file);
-  await settings.save({communityEnabled: false, runInBackground: true, uploadLimit: "5m", maxCommunityPorts: 6,
+  await settings.save({communityEnabled: false, runInBackground: true, startWithSystem: true,
+    uploadLimit: "5m", maxCommunityPorts: 6,
     maxCommunityStorageGiB: 12});
   const restored = new DistributionSettings(file);
-  assert.deepEqual(await restored.load(), {communityEnabled: false, runInBackground: true, uploadLimit: "5M",
+  assert.deepEqual(await restored.load(), {communityEnabled: false, runInBackground: true,
+    startWithSystem: true, uploadLimit: "5M",
     maxCommunityPorts: 6, maxCommunityStorageGiB: 12});
+});
+
+test("starting with the system also enables background operation", () => {
+  const settings = normalizeDistributionSettings({runInBackground: false, startWithSystem: true});
+  assert.equal(settings.runInBackground, true);
+  assert.equal(settings.startWithSystem, true);
 });
