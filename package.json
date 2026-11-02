@@ -34,8 +34,8 @@
         "to": "catalog-root.pub"
       },
       {
-        "from": "resources/torrentd/${os}-${arch}",
-        "to": "torrentd/${os}-${arch}"
+        "from": "resources/torrentd/${platform}-${arch}",
+        "to": "torrentd/${platform}-${arch}"
       }
     ],
     "directories": {
@@ -54,7 +54,13 @@
     },
     "mac": {
       "target": [
-        "dmg"
+        {
+          "target": "dmg",
+          "arch": [
+            "x64",
+            "arm64"
+          ]
+        }
       ],
       "category": "public.app-category.developer-tools"
     }

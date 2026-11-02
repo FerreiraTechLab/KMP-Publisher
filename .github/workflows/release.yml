@@ -1,0 +1,40 @@
+name: Publisher release builds
+
+# Gera os instaladores de cada sistema em máquinas nativas. Os arquivos ficam como
+# artefatos do workflow; a release pública é criada no repositório de distribuição.
+on:
+  workflow_dispatch:
+  push:
+    tags: ["v*"]
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: --linux AppImage
+            files: release/*.AppImage
+          - os: windows-latest
+            target: --win nsis
+            files: release/*.exe
+          - os: macos-latest
+            target: --mac dmg
+            files: release/*.dmg
+    runs-on: ${{ matrix.os }}
+    env:
+      # Sem certificado de assinatura: o build não deve tentar procurar um no chaveiro.
+      CSC_IDENTITY_AUTO_DISCOVERY: "false"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: {node-version: 22, cache: npm}
+      - run: npm ci
+      - run: npm test
+      - run: npx electron-builder --publish never ${{ matrix.target }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: publisher-${{ matrix.os }}
+          path: ${{ matrix.files }}
+          if-no-files-found: error
