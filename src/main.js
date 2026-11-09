@@ -11,6 +11,8 @@ const {MetricsStore} = require("./core/metrics-store");
 const {resolveProposalPath} = require("./core/proposal-record");
 const {DistributionSettings, normalizeDistributionSettings} = require("./core/distribution-settings");
 const {StartupManager} = require("./core/startup-manager");
+const {AppUpdater} = require("./core/app-updater");
+const {spawn} = require("node:child_process");
 
 let seedManager;
 let metricsStore;
@@ -21,6 +23,8 @@ let startupManager;
 let mainWindow = null;
 const publishing = new Map();
 let tray = null;
+let appUpdater = null;
+let notifiedUpdate = null;
 let isQuitting = false;
 const CATALOG_URL = "https://ferreiratechlab.github.io/KMP-catalog";
 const singleInstance = app.requestSingleInstanceLock();
@@ -175,7 +179,58 @@ function updateTray() {
   tray.on("click", () => createWindow());
 }
 
-ipcMain.handle("app:bootstrap", async () => ({ready: applicationReady, github: await githubIdentity()}));
+function reportUpdate(state) {
+  if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send("updater:state", state);
+  if (state.status === "available" && notifiedUpdate !== state.version && Notification.isSupported() &&
+      (!mainWindow || !mainWindow.isVisible())) {
+    notifiedUpdate = state.version;
+    new Notification({title: "KMP Publisher", body: `A versão ${state.version} está disponível. Abra o Publisher para atualizar.`}).show();
+  }
+}
+
+// Linux troca o AppImage e reabre; Windows roda o instalador; no Mac, sem assinatura da
+// Apple, só dá para abrir o DMG e deixar a troca com o usuário.
+async function installUpdate() {
+  if (publishing.size) throw new Error("Aguarde o envio da proposta terminar antes de atualizar.");
+  const file = appUpdater.state.status === "ready" ? appUpdater.state.file : await appUpdater.download();
+  if (process.platform === "linux") {
+    const target = process.env.APPIMAGE;
+    if (!target) { shell.showItemInFolder(file); return {ok: true, manual: true,
+      message: "Este Publisher não roda como AppImage; o arquivo novo foi aberto na pasta de downloads."}; }
+    const staged = `${target}.update`;
+    try {
+      await fs.copyFile(file, staged);
+      await fs.chmod(staged, 0o755);
+      await fs.rename(staged, target);
+    } catch (error) {
+      await fs.rm(staged, {force: true});
+      shell.showItemInFolder(file);
+      return {ok: true, manual: true, message: `Sem permissão para trocar ${target}; substitua pelo arquivo aberto na pasta.`};
+    }
+    isQuitting = true;
+    await seedManager.shutdown();
+    // app.relaunch delega a um processo de dentro do AppImage montado, que some quando
+    // o app fecha; um sh à parte espera a trava de instância ser liberada e abre o novo.
+    const env = {...process.env};
+    for (const name of ["APPDIR", "APPIMAGE", "ARGV0", "OWD"]) delete env[name];
+    spawn("/bin/sh", ["-c", 'sleep 2; exec "$0"', target], {detached: true, stdio: "ignore", env}).unref();
+    app.exit(0);
+    return {ok: true};
+  }
+  if (process.platform === "win32") {
+    isQuitting = true;
+    await seedManager.shutdown();
+    spawn(file, [], {detached: true, stdio: "ignore"}).unref();
+    app.quit();
+    return {ok: true};
+  }
+  const opened = await shell.openPath(file);
+  if (opened) throw new Error(opened);
+  return {ok: true, manual: true,
+    message: "O instalador foi aberto. Encerre o Publisher e arraste o app para Aplicativos, substituindo o anterior."};
+}
+
+ipcMain.handle("app:bootstrap", async () => ({ready: applicationReady, github: await githubIdentity(), appVersion: app.getVersion()}));
 ipcMain.handle("dashboard:get", async () => {
   try { return {ok: true, ...(await dashboardData())}; }
   catch (error) { return {ok: false, error: error.message}; }
@@ -258,6 +313,7 @@ ipcMain.handle("distribution:set", async (_event, value) => {
       await seedManager.save();
       await prepareAllLocalSeeds();
     }
+    if (settings.checkForUpdates && !previous.checkForUpdates) appUpdater.check().catch(() => {});
     const result = settings.communityEnabled ? await synchronizePublishedSeeds() : {community: {removed: 0}};
     return {ok: true, settings, result};
   } catch (error) { return {ok: false, error: error.message}; }
@@ -334,6 +390,12 @@ ipcMain.handle("github:review-status", async (_event, id) => {
   } catch (error) { return {ok: false, error: error.message}; }
 });
 ipcMain.handle("external:open", (_event, url) => shell.openExternal(url));
+ipcMain.handle("updater:get", () => ({...appUpdater.state}));
+ipcMain.handle("updater:check", () => appUpdater.check());
+ipcMain.handle("updater:install", async () => {
+  try { return await installUpdate(); }
+  catch (error) { return {ok: false, error: error.message}; }
+});
 ipcMain.handle("seeds:start", async (_event, id) => {
   try { await seedManager.start(id); return {ok: true}; }
   catch (error) {
@@ -370,6 +432,12 @@ app.whenReady().then(async () => {
     finally { applicationReady = true; }
   })();
   setInterval(() => synchronizePublishedSeeds().catch(() => {}), 5 * 60 * 1000).unref();
+  appUpdater = new AppUpdater({currentVersion: app.getVersion(), platform: process.platform, arch: process.arch,
+    directory: path.join(app.getPath("userData"), "updates"), onState: reportUpdate});
+  // Como o Publisher costuma ficar aberto em segundo plano, a verificação se repete.
+  const checkUpdates = () => { if (distributionSettings.value.checkForUpdates) appUpdater.check().catch(() => {}); };
+  setTimeout(checkUpdates, 20 * 1000).unref();
+  setInterval(checkUpdates, 6 * 60 * 60 * 1000).unref();
   setInterval(() => dashboardData().catch(() => {}), 10 * 1000).unref();
   app.on("activate", () => createWindow());
 });

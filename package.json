@@ -1,6 +1,6 @@
 {
   "name": "kmp-publisher",
-  "version": "0.3.8",
+  "version": "0.3.9",
   "description": "Interface multiplataforma para propor ports ao catálogo KMP",
   "main": "src/main.js",
   "author": "FerreiraTechLab",

@@ -26,8 +26,9 @@
   <div id="app-shell" class="hidden">
     <header><div class="brand">KMP</div><div><h1>Publisher</h1><p id="account-label">Gerenciador de ports</p></div>
       <button type="button" id="go-dashboard" class="header-button hidden">Dashboard</button>
-      <button type="button" id="open-settings" class="icon-button settings-button" title="Configurações de distribuição" aria-label="Configurações de distribuição">⚙</button><span class="version">v0.3</span></header>
+      <button type="button" id="open-settings" class="icon-button settings-button" title="Configurações de distribuição" aria-label="Configurações de distribuição">⚙</button><span class="version" id="app-version">v0.3</span></header>
     <main>
+      <section id="update-banner" class="update-banner hidden" role="status"><div><strong id="update-title">Atualização disponível</strong><span id="update-detail"></span></div><button type="button" id="install-update" class="primary">Atualizar</button></section>
       <section id="dashboard-view">
         <div class="dashboard-heading"><div><span class="eyebrow">VISÃO GERAL</span><h2>Seus ports</h2><p>Publicação e distribuição em um só lugar.</p></div>
           <button type="button" id="add-port" class="add-button"><strong>+</strong><span>Adicionar port</span></button></div>
@@ -88,11 +89,13 @@
     <section class="settings-list">
       <label class="setting-row"><span><strong>Nó comunitário</strong><small>Baixa e semeia cópias de outros ports automaticamente.</small></span><span class="switch-label"><input name="communityEnabled" type="checkbox" checked><span class="switch"></span></span></label>
       <label class="setting-row"><span><strong>Continuar em segundo plano</strong><small>Ao fechar a janela, mantém os ports semeando na bandeja do sistema.</small></span><span class="switch-label"><input name="runInBackground" type="checkbox"><span class="switch"></span></span></label>
+      <label class="setting-row"><span><strong>Verificar atualizações do Publisher</strong><small>Procura versões novas ao abrir e a cada 6 horas; nada é instalado sem você confirmar.</small></span><span class="switch-label"><input name="checkForUpdates" type="checkbox" checked><span class="switch"></span></span></label>
       <label class="setting-row"><span><strong>Iniciar com o sistema</strong><small>Abre o nó automaticamente, com a janela oculta, ao entrar na sua conta.</small></span><span class="switch-label"><input name="startWithSystem" type="checkbox"><span class="switch"></span></span></label>
       <label><span>Limite total de upload</span><select name="uploadLimit"><option value="256K">256 KiB/s</option><option value="512K">512 KiB/s</option><option value="1M">1 MiB/s</option><option value="2M">2 MiB/s</option><option value="5M">5 MiB/s</option><option value="10M">10 MiB/s</option><option value="0">Sem limite</option></select><small>Compartilhado entre todos os ports semeados.</small></label>
       <label><span>Máximo de ports comunitários</span><input name="maxCommunityPorts" type="number" min="1" max="100" value="10"><small>Não limita os ports publicados por você.</small></label>
       <label><span>Espaço para o nó comunitário (GiB)</span><input name="maxCommunityStorageGiB" type="number" min="1" max="100" step="1" value="4"><small>Limite reservado para cópias baixadas automaticamente.</small></label>
     </section>
+    <p class="update-check-line"><span id="update-check-status">Versão instalada</span><button type="button" id="check-updates" class="secondary">Verificar agora</button></p>
     <p id="settings-message" class="messages hidden"></p>
     <div class="modal-actions"><button type="button" id="cancel-settings" class="secondary">Cancelar</button><button type="submit" id="save-settings" class="primary">Salvar configurações</button></div>
   </form></dialog>

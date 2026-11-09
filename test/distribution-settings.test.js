@@ -18,11 +18,11 @@ test("persists distribution settings", async (context) => {
   const settings = new DistributionSettings(file);
   await settings.save({communityEnabled: false, runInBackground: true, startWithSystem: true,
     uploadLimit: "5m", maxCommunityPorts: 6,
-    maxCommunityStorageGiB: 12});
+    maxCommunityStorageGiB: 12, checkForUpdates: false});
   const restored = new DistributionSettings(file);
   assert.deepEqual(await restored.load(), {communityEnabled: false, runInBackground: true,
     startWithSystem: true, uploadLimit: "5M",
-    maxCommunityPorts: 6, maxCommunityStorageGiB: 12});
+    maxCommunityPorts: 6, maxCommunityStorageGiB: 12, checkForUpdates: false});
 });
 
 test("starting with the system also enables background operation", () => {

@@ -17,6 +17,9 @@ test("keeps port management actions accessible", () => {
 });
 
 test("offers background and system startup controls", () => {
+  assert.match(html, /name="checkForUpdates"/);
+  for (const id of ["update-banner", "install-update", "check-updates", "app-version"])
+    assert.match(html, new RegExp(`id="${id}"`));
   assert.match(html, /name="runInBackground"/);
   assert.match(html, /name="startWithSystem"/);
 });

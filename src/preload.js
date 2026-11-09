@@ -20,5 +20,9 @@ contextBridge.exposeInMainWorld("publisher", {
   publishProposal: (id) => ipcRenderer.invoke("github:publish", id),
   onPublishProgress: (callback) => ipcRenderer.on("publish:progress", (_event, progress) => callback(progress)),
   reviewStatus: (id) => ipcRenderer.invoke("github:review-status", id),
-  openExternal: (url) => ipcRenderer.invoke("external:open", url)
+  openExternal: (url) => ipcRenderer.invoke("external:open", url),
+  updateState: () => ipcRenderer.invoke("updater:get"),
+  checkForUpdates: () => ipcRenderer.invoke("updater:check"),
+  installUpdate: () => ipcRenderer.invoke("updater:install"),
+  onUpdateState: (callback) => ipcRenderer.on("updater:state", (_event, state) => callback(state))
 });

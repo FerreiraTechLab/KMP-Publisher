@@ -6,7 +6,8 @@ const DEFAULTS = Object.freeze({
   startWithSystem: false,
   uploadLimit: "1M",
   maxCommunityPorts: 10,
-  maxCommunityStorageGiB: 4
+  maxCommunityStorageGiB: 4,
+  checkForUpdates: true
 });
 const UPLOAD_LIMITS = new Set(["0", "256K", "512K", "1M", "2M", "5M", "10M"]);
 
@@ -23,7 +24,8 @@ function normalizeDistributionSettings(value = {}) {
     maxCommunityPorts: Number.isInteger(maxCommunityPorts) && maxCommunityPorts >= 1 && maxCommunityPorts <= 100 ?
       maxCommunityPorts : DEFAULTS.maxCommunityPorts,
     maxCommunityStorageGiB: Number.isFinite(maxCommunityStorageGiB) && maxCommunityStorageGiB >= 1 && maxCommunityStorageGiB <= 100 ?
-      maxCommunityStorageGiB : DEFAULTS.maxCommunityStorageGiB
+      maxCommunityStorageGiB : DEFAULTS.maxCommunityStorageGiB,
+    checkForUpdates: value.checkForUpdates !== false
   };
 }
 
