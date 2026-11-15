@@ -49,6 +49,13 @@ test("picks the newest complete Publisher release for this system", () => {
   assert.equal(selectRelease(releases, "darwin", "x64"), null);
 });
 
+test("prefers the highest version regardless of the API order", () => {
+  // Ordem real devolvida pela API em 2026-11-15: tags no mesmo commit saem em ordem alfabética.
+  const listed = ["0.3.9", "0.3.8", "0.3.10"].map((version) => ({tag_name: `publisher-v${version}`, draft: false,
+    html_url: version, assets: [asset(`KMP-Publisher-${version}-linux-x64.AppImage`), asset("SHA256SUMS.txt")]}));
+  assert.equal(selectRelease(listed, "linux", "x64").version, "0.3.10");
+});
+
 test("parses SHA256SUMS lines", () => {
   const sums = parseChecksums(`${digest}  KMP-Publisher-0.3.9-linux-x64.AppImage\n${"0".repeat(64)} *other.exe\n`);
   assert.equal(sums.get("KMP-Publisher-0.3.9-linux-x64.AppImage"), digest);

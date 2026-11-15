@@ -34,21 +34,25 @@ function parseChecksums(text) {
   return sums;
 }
 
-// A release mais nova do Publisher que tenha o instalador deste sistema e o
-// SHA256SUMS.txt; uma release incompleta é ignorada.
+// A release de maior versão do Publisher que tenha o instalador deste sistema e o
+// SHA256SUMS.txt; uma release incompleta é ignorada. A API não ordena por publicação:
+// com tags no mesmo commit, publisher-v0.3.9 vinha antes de publisher-v0.3.10.
 function selectRelease(list, platform, arch) {
   const pattern = assetPattern(platform, arch);
   if (!pattern) return null;
+  let best = null;
   for (const release of list) {
     if (release.draft || !String(release.tag_name).startsWith(TAG_PREFIX)) continue;
     const installer = release.assets.find((asset) => pattern.test(asset.name));
     const checksums = release.assets.find((asset) => asset.name === "SHA256SUMS.txt");
     if (!installer || !checksums) continue;
-    return {version: release.tag_name.slice(TAG_PREFIX.length), page: release.html_url,
-      notes: release.body || "", installer: {name: installer.name, size: installer.size,
-        url: installer.browser_download_url}, checksumsUrl: checksums.browser_download_url};
+    const version = release.tag_name.slice(TAG_PREFIX.length);
+    if (best && compareVersions(version, best.version) <= 0) continue;
+    best = {version, page: release.html_url, notes: release.body || "",
+      installer: {name: installer.name, size: installer.size, url: installer.browser_download_url},
+      checksumsUrl: checksums.browser_download_url};
   }
-  return null;
+  return best;
 }
 
 class AppUpdater {
