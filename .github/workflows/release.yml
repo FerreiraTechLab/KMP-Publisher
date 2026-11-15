@@ -39,3 +39,6 @@ jobs:
           name: publisher-${{ matrix.os }}
           path: ${{ matrix.files }}
           if-no-files-found: error
+          # Os instaladores vão para o KMP-releases; guardá-los 90 dias aqui esgotava a cota
+          # de artefatos da conta em três versões.
+          retention-days: 7
