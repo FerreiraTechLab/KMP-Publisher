@@ -1,14 +1,35 @@
 name: Publisher release builds
 
-# Gera os instaladores de cada sistema em máquinas nativas. Os arquivos ficam como
-# artefatos do workflow; a release pública é criada no repositório de distribuição.
+# Gera os instaladores de cada sistema em máquinas nativas e os anexa a um rascunho de
+# release deste repositório; a release pública é criada no repositório de distribuição.
+# Anexos de release não contam na cota de artefatos do Actions, que os instaladores de
+# três versões esgotavam.
 on:
   workflow_dispatch:
   push:
     tags: ["v*"]
 
+permissions:
+  contents: write
+
 jobs:
+  draft:
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.create.outputs.tag }}
+    steps:
+      - id: create
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: build-${{ github.run_id }}
+        run: |
+          gh release create "$TAG" --draft -R "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
+            --title "Build $GITHUB_RUN_ID ($GITHUB_SHA)" \
+            --notes "Instaladores gerados pelo workflow; a release pública fica no KMP-releases."
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+
   build:
+    needs: draft
     strategy:
       fail-fast: false
       matrix:
@@ -34,11 +55,8 @@ jobs:
       - run: npm ci
       - run: npm test
       - run: npx electron-builder --publish never ${{ matrix.target }}
-      - uses: actions/upload-artifact@v4
-        with:
-          name: publisher-${{ matrix.os }}
-          path: ${{ matrix.files }}
-          if-no-files-found: error
-          # Os instaladores vão para o KMP-releases; guardá-los 90 dias aqui esgotava a cota
-          # de artefatos da conta em três versões.
-          retention-days: 7
+      - name: Anexar os instaladores ao rascunho
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "${{ needs.draft.outputs.tag }}" ${{ matrix.files }} --clobber -R "$GITHUB_REPOSITORY"
