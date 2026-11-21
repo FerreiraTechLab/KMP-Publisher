@@ -75,3 +75,18 @@ arquivo inteiro.
 Os contadores ficam no diretório de dados do aplicativo e sobrevivem a
 reinicializações. Cada card abre os detalhes de distribuição e permite iniciar
 uma nova revisão com os campos existentes preenchidos e a revisão incrementada.
+
+## Licença
+
+Copyright (C) 2026 Weslei Ferreira Santos e colaboradores do KMP.
+
+O KMP Publisher é software livre: você pode redistribuí-lo e/ou modificá-lo sob
+os termos da GNU General Public License, publicada pela Free Software
+Foundation, na versão 3 da licença ou (a seu critério) qualquer versão
+posterior. Veja [LICENSE](LICENSE).
+
+O `kmp-torrentd` empacotado em `resources/torrentd/` vem do repositório
+[KMP](https://github.com/FerreiraTechLab/KMP), também sob a GPL-3.0, e contém
+uma cópia modificada da [anacrolix/torrent](https://github.com/anacrolix/torrent),
+sob a Mozilla Public License 2.0. Electron e as demais dependências mantêm as
+próprias licenças.

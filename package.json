@@ -4,7 +4,7 @@
   "description": "Interface multiplataforma para propor ports ao catálogo KMP",
   "main": "src/main.js",
   "author": "FerreiraTechLab",
-  "license": "UNLICENSED",
+  "license": "GPL-3.0-or-later",
   "scripts": {
     "start": "node scripts/start-electron.js",
     "test": "node --test",
